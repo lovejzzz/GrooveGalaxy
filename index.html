@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Invader Drum Machine</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="controls">
+            <div class="title-container">
+                <img src="Groove-Galaxy.png" alt="Groove Galaxy" class="title-image">
+            </div>
+            <button id="controlButton">Start</button>
+            <div class="controls-container">
+                <div class="control">
+                    <label for="bpm-control">BPM:</label>
+                    <input type="range" id="bpm-control" min="60" max="200" value="120">
+                    <span id="bpm-value">120</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
