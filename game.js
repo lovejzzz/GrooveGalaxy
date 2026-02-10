@@ -779,7 +779,9 @@ class Game {
                         col,
                         x: col * this.cellWidth + this.cellWidth / 2,
                         y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
-                        alive: true
+                        alive: true,
+                        hp: this.upgrades.alienArmor ? 2 : 1,
+                        maxHp: this.upgrades.alienArmor ? 2 : 1
                     });
                 }
             }
@@ -1084,6 +1086,11 @@ class Game {
         if (this.currentWave >= 6) dropChance = 0.4; // 40%
         else if (this.currentWave >= 3) dropChance = 0.3; // 30%
         
+        // Loot Denial upgrade halves drop rate
+        if (this.upgrades.lootDenial) {
+            dropChance *= 0.5;
+        }
+        
         if (Math.random() > dropChance) return; // No drop
         
         // Weighted random selection
@@ -1128,6 +1135,8 @@ class Game {
         const colors = this.instrumentColors[alien.row];
         
         // Different weapons based on row/instrument
+        const speedMultiplier = this.upgrades.doubleTime ? 1.5 : 1.0;
+        
         if (alien.row === 0) {
             // Bass — Heavy Cannon
             let baseDamage = 12;
@@ -1140,7 +1149,7 @@ class Game {
                 y: alien.y,
                 width: 16,
                 height: 16,
-                speed: 2,
+                speed: 2 * speedMultiplier,
                 damage: baseDamage,
                 color: colors.primary,
                 row: alien.row,
@@ -1160,7 +1169,7 @@ class Game {
                     y: alien.y - (i * 6), // stagger vertically so they arrive at different times
                     width: 6,
                     height: 10,
-                    speed: 4 + (i * 0.5), // slightly different speeds for spread effect
+                    speed: (4 + (i * 0.5)) * speedMultiplier,
                     damage: bulletDamage,
                     color: colors.primary,
                     row: alien.row,
@@ -1179,7 +1188,7 @@ class Game {
                 y: alien.y,
                 width: 8,
                 height: 12,
-                speed: 3,
+                speed: 3 * speedMultiplier,
                 damage: homingDamage,
                 color: colors.primary,
                 row: alien.row,
@@ -1348,14 +1357,31 @@ class Game {
             for (let j = 0; j < this.aliens.length; j++) {
                 const alien = this.aliens[j];
                 if (alien.alive && this.checkCollision(bullet, alien)) {
-                    // Kill alien for this loop only
-                    alien.alive = false;
-                    this.createDebris(alien.x, alien.y, alien.row);
-                    this.createExplosion(alien.x, alien.y, false);
-                    this.addShake(4);
+                    // Decrement alien HP
+                    if (!alien.hp) alien.hp = 1; // Backwards compatibility
+                    alien.hp--;
                     
-                    // Drop power-up chance
-                    this.dropPowerUp(alien.x, alien.y);
+                    if (alien.hp <= 0) {
+                        // Kill alien for this loop only
+                        alien.alive = false;
+                        
+                        // Quick Respawn - set respawn counter
+                        if (this.upgrades.quickRespawn) {
+                            alien.respawnIn = 8; // 8 steps
+                        }
+                        
+                        this.createDebris(alien.x, alien.y, alien.row);
+                        this.createExplosion(alien.x, alien.y, false);
+                        this.addShake(4);
+                        
+                        // Drop power-up chance
+                        this.dropPowerUp(alien.x, alien.y);
+                    } else {
+                        // Hit but not dead - flash white
+                        alien.hitFlash = 10;
+                        this.createPopup(alien.x, alien.y, `${alien.hp} HP`, '#ffffff');
+                        this.addShake(2);
+                    }
                     
                     this.bullets.splice(i, 1);
                     hitAlien = true;
@@ -1377,7 +1403,8 @@ class Game {
                 // Homing missile — track defender
                 const defenderCenterX = this.defender.x + this.defender.width / 2;
                 const dx = defenderCenterX - proj.x;
-                proj.x += Math.sign(dx) * Math.min(Math.abs(dx), 0.5); // Track at 0.5px/frame
+                const trackingSpeed = this.upgrades.homingBoost ? 1.2 : 0.5;
+                proj.x += Math.sign(dx) * Math.min(Math.abs(dx), trackingSpeed);
                 
                 // Trail for homing missiles
                 if (!proj.trail) proj.trail = [];
@@ -1613,6 +1640,11 @@ class Game {
                         // Alien shoots!
                         this.alienShoot(alien);
                         
+                        // Volley Fire upgrade - shoot twice
+                        if (this.upgrades.volleyFire) {
+                            this.alienShoot(alien);
+                        }
+                        
                         const shakeIntensities = [8 + this.intensity * 4, 5, 2];
                         this.addShake(shakeIntensities[row]);
                         
@@ -1621,6 +1653,29 @@ class Game {
                         });
                     }
                 }
+            }
+        }
+
+        // Update alien respawn counters (Quick Respawn upgrade)
+        if (this.upgrades.quickRespawn) {
+            for (const alien of this.aliens) {
+                if (!alien.alive && alien.respawnIn !== undefined) {
+                    alien.respawnIn--;
+                    if (alien.respawnIn <= 0) {
+                        alien.alive = true;
+                        alien.hp = alien.maxHp || 1;
+                        delete alien.respawnIn;
+                        this.createExplosion(alien.x, alien.y, true);
+                        this.createPopup(alien.x, alien.y, 'RESPAWN!', '#00ffff');
+                    }
+                }
+            }
+        }
+        
+        // Decay alien hit flash
+        for (const alien of this.aliens) {
+            if (alien.hitFlash && alien.hitFlash > 0) {
+                alien.hitFlash--;
             }
         }
 
@@ -1823,8 +1878,15 @@ class Game {
         for (const alien of this.aliens) {
             if (alien.alive) {
                 const colors = this.instrumentColors[alien.row];
-                this.ctx.fillStyle = colors.primary;
-                this.ctx.strokeStyle = colors.secondary;
+                
+                // Hit flash effect - flash white when hit
+                if (alien.hitFlash && alien.hitFlash > 0) {
+                    this.ctx.fillStyle = '#ffffff';
+                    this.ctx.strokeStyle = '#ffffff';
+                } else {
+                    this.ctx.fillStyle = colors.primary;
+                    this.ctx.strokeStyle = colors.secondary;
+                }
                 this.ctx.lineWidth = 2;
                 
                 switch(alien.row) {
@@ -1871,6 +1933,22 @@ class Game {
                         break;
                 }
                 this.ctx.lineWidth = 1;
+                
+                // Draw HP bar if alien has more than 1 HP
+                if (alien.maxHp && alien.maxHp > 1) {
+                    const hpBarWidth = 30;
+                    const hpBarHeight = 4;
+                    const hpBarX = alien.x - hpBarWidth/2;
+                    const hpBarY = alien.y - 25;
+                    
+                    this.ctx.strokeStyle = '#ffffff';
+                    this.ctx.lineWidth = 1;
+                    this.ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+                    
+                    const hpPercent = (alien.hp || 1) / alien.maxHp;
+                    this.ctx.fillStyle = hpPercent > 0.5 ? '#00ff00' : '#ff0000';
+                    this.ctx.fillRect(hpBarX + 1, hpBarY + 1, (hpBarWidth - 2) * hpPercent, hpBarHeight - 2);
+                }
             }
         }
 
@@ -1999,6 +2077,23 @@ class Game {
         this.ctx.fillStyle = hpColor;
         this.ctx.fillRect(barX + 1, barY + 1, (barWidth - 2) * hpPercent, barHeight - 2);
 
+        // Draw fire zones (Napalm Rounds)
+        for (const zone of this.fireZones) {
+            const alpha = zone.life / 180;
+            const flicker = Math.sin(Date.now() / 50) * 0.3 + 0.7;
+            
+            this.ctx.globalAlpha = alpha * flicker * 0.6;
+            const gradient = this.ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, 20);
+            gradient.addColorStop(0, '#ff6600');
+            gradient.addColorStop(0.5, '#ff3300');
+            gradient.addColorStop(1, 'transparent');
+            this.ctx.fillStyle = gradient;
+            this.ctx.beginPath();
+            this.ctx.arc(zone.x, zone.y, 20, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.globalAlpha = 1;
+        }
+
         // Draw power-ups
         for (const powerUp of this.powerUps) {
             const pulse = Math.sin(powerUp.pulse) * 0.3 + 1;
@@ -2034,6 +2129,7 @@ class Game {
         for (const bullet of this.bullets) {
             for (let i = 0; i < bullet.trail.length; i++) {
                 const t = bullet.trail[i];
+                if (!t || t.x === undefined) continue;
                 const alpha = (i + 1) / bullet.trail.length * 0.5;
                 this.ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
                 this.ctx.beginPath();
@@ -2057,6 +2153,7 @@ class Game {
                 if (proj.trail) {
                     for (let i = 0; i < proj.trail.length; i++) {
                         const t = proj.trail[i];
+                        if (!t || t.x === undefined) continue;
                         const alpha = (i + 1) / proj.trail.length * 0.6;
                         this.ctx.globalAlpha = alpha;
                         this.ctx.fillStyle = '#ff6600';
@@ -2090,13 +2187,14 @@ class Game {
                 this.ctx.shadowBlur = 0;
             } else if (proj.type === 'homing') {
                 // Homing Missile — purple with curved trail
-                if (proj.trail) {
+                if (proj.trail && proj.trail.length > 1 && proj.trail[0]) {
                     this.ctx.strokeStyle = '#cc00ff';
                     this.ctx.lineWidth = 2;
                     this.ctx.globalAlpha = 0.5;
                     this.ctx.beginPath();
                     this.ctx.moveTo(proj.trail[0].x, proj.trail[0].y);
                     for (let i = 1; i < proj.trail.length; i++) {
+                        if (!proj.trail[i]) continue;
                         this.ctx.lineTo(proj.trail[i].x, proj.trail[i].y);
                     }
                     this.ctx.stroke();
