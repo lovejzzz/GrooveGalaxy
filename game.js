@@ -617,8 +617,24 @@ class Game {
 
         // Canvas click for grid editing and card selection
         this.canvas.addEventListener('click', (e) => {
-            // Tutorial advance
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const scaleX = this.canvas.width / rect.width;
+            const scaleY = this.canvas.height / rect.height;
+            const canvasX = (x * scaleX);
+            const canvasY = (y * scaleY);
+            
+            // Tutorial: check if skip button was clicked
             if (this.tutorialStep >= 0) {
+                // Skip button bounds (top right corner)
+                if (canvasX >= this.canvas.width - 90 && canvasX <= this.canvas.width - 10 &&
+                    canvasY >= 10 && canvasY <= 40) {
+                    this.skipTutorial();
+                    return;
+                }
+                // Otherwise advance tutorial
                 this.advanceTutorial();
                 return;
             }
@@ -628,15 +644,6 @@ class Game {
                 this.restartGame();
                 return;
             }
-            
-            const rect = this.canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            const scaleX = this.canvas.width / rect.width;
-            const scaleY = this.canvas.height / rect.height;
-            const canvasX = (x * scaleX);
-            const canvasY = (y * scaleY);
             
             // Handle card selection during cardpick phase
             if (this.wavePhase === 'cardpick') {
@@ -1048,14 +1055,19 @@ class Game {
             for (let col = 0; col < this.gridCols; col++) {
                 if (this.grid[row][col]) {
                     const isEvolved = this.evolvedCells.has(`${row},${col}`);
+                    // Boss waves: aliens have 3x HP
+                    let baseHP = this.upgrades.alienArmor ? 2 : 1;
+                    if (this.isBossWave) {
+                        baseHP *= 3;
+                    }
                     this.aliens.push({
                         row,
                         col,
                         x: col * this.cellWidth + this.cellWidth / 2,
                         y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
                         alive: true,
-                        hp: this.upgrades.alienArmor ? 2 : 1,
-                        maxHp: this.upgrades.alienArmor ? 2 : 1,
+                        hp: baseHP,
+                        maxHp: baseHP,
                         evolved: isEvolved,
                         damage: isEvolved ? 2 : 0,
                         loopsAlive: 0 // Track how many loops this alien survived
@@ -1093,7 +1105,9 @@ class Game {
             this.aiAccuracy = 0.8;
             this.aiShotsPerTurn = 2;
             this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
-            this.defender.speed = Math.min(12, this.defender.speed + 2);
+            // Boss: Defender moves faster (1.5x base speed)
+            const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
+            this.defender.speed = Math.round(5 * speedScale * 1.5);
             this.bossShieldTimer = 20 * 60; // 20 seconds
             this.bossMissileTimer = 30 * 60; // 30 seconds
         } else if (this.currentWave >= 10) {
@@ -3205,11 +3219,22 @@ class Game {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
-            // Skip button
+            // Skip button (top right corner)
+            this.ctx.fillStyle = 'rgba(100, 100, 100, 0.8)';
+            this.ctx.fillRect(this.canvas.width - 90, 10, 80, 30);
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(this.canvas.width - 90, 10, 80, 30);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 14px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('SKIP', this.canvas.width - 50, 30);
+            
+            // Continue instruction
             this.ctx.fillStyle = '#888888';
             this.ctx.font = '14px "Courier New"';
-            this.ctx.textAlign = 'right';
-            this.ctx.fillText('Tap anywhere to continue →', this.canvas.width - 10, this.canvas.height - 10);
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('Tap anywhere to continue', this.canvas.width / 2, this.canvas.height - 10);
             this.ctx.textAlign = 'left';
             
             // Tutorial content
