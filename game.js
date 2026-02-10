@@ -1,43 +1,135 @@
 class DrumMachine {
     constructor() {
         this.audioContext = null;
-        this.sounds = [];
         this.isInitialized = false;
-        this.soundOrder = [0, 1, 2]; // Maps row index to sound index (bass, snare, hi-hat)
+        this.soundOrder = [0, 1, 2]; // Maps row index to sound index (bass, snare, hi-hat, tom, cymbal)
+        this.currentKit = '808'; // Default kit
+        this.noiseBuffer = null; // For noise-based sounds
+        
+        // Sound kit definitions
+        this.kits = {
+            '808': {
+                name: '808',
+                bass: { freq: 80, decay: 0.2, wave: 'sine' },
+                snare: { freq: 180, decay: 0.15, wave: 'triangle', noise: true, noiseMix: 0.6 },
+                hihat: { freq: 10000, decay: 0.08, wave: 'square', noise: true, noiseMix: 0.9 },
+                tom: { freq: 200, decay: 0.15, wave: 'triangle' },
+                cymbal: { freq: 3000, decay: 0.5, wave: 'square', noise: true, noiseMix: 0.8 }
+            },
+            'acoustic': {
+                name: 'Acoustic',
+                bass: { freq: 60, decay: 0.3, wave: 'sine' },
+                snare: { freq: 220, decay: 0.12, wave: 'triangle', noise: true, noiseMix: 0.7 },
+                hihat: { freq: 8000, decay: 0.05, wave: 'square', noise: true, noiseMix: 0.95 },
+                tom: { freq: 180, decay: 0.2, wave: 'sine' },
+                cymbal: { freq: 4000, decay: 0.5, wave: 'square', noise: true, noiseMix: 0.85 }
+            },
+            'electronic': {
+                name: 'Electronic',
+                bass: { freq: 40, freq2: 80, decay: 0.1, wave: 'sawtooth' }, // Sub-bass + overtone
+                snare: { freq: 200, decay: 0.1, wave: 'square', noise: true, noiseMix: 0.5 },
+                hihat: { freq: 12000, freq2: 12100, decay: 0.06, wave: 'square' }, // Detuned for metallic
+                tom: { freq: 150, decay: 0.12, wave: 'square' },
+                cymbal: { freq: 5000, freq2: 5200, decay: 0.4, wave: 'square' }
+            }
+        };
     }
 
     async init() {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const soundFiles = ['bassdrum.wav', 'snare.wav', 'hi-hat.wav'];
         
-        try {
-            this.sounds = await Promise.all(
-                soundFiles.map(file => 
-                    fetch(`DrumAudio/${file}`)
-                        .then(response => response.arrayBuffer())
-                        .then(buffer => this.audioContext.decodeAudioData(buffer))
-                        .catch(err => {
-                            console.warn(`Failed to load ${file}:`, err);
-                            return null;
-                        })
-                )
-            );
+        // Create noise buffer for snare/hihat sounds
+        const bufferSize = this.audioContext.sampleRate * 0.5; // 0.5 seconds of noise
+        this.noiseBuffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const output = this.noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            output[i] = Math.random() * 2 - 1;
+        }
+        
+        this.isInitialized = true;
+    }
 
-            this.isInitialized = true;
-        } catch (error) {
-            console.error('Error loading sounds:', error);
+    setKit(kitName) {
+        if (this.kits[kitName]) {
+            this.currentKit = kitName;
         }
     }
 
-    playSound(index) {
+    playSound(rowIndex) {
         if (!this.isInitialized) return;
-        const buffer = this.sounds[this.soundOrder[index]];
-        if (!buffer) return;
         
-        const source = this.audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(this.audioContext.destination);
-        source.start();
+        const soundTypes = ['bass', 'snare', 'hihat', 'tom', 'cymbal'];
+        const soundType = soundTypes[rowIndex] || 'bass';
+        const kit = this.kits[this.currentKit];
+        const params = kit[soundType];
+        
+        if (!params) return;
+        
+        const now = this.audioContext.currentTime;
+        const gainNode = this.audioContext.createGain();
+        gainNode.connect(this.audioContext.destination);
+        
+        // Volume envelope
+        gainNode.gain.setValueAtTime(0.4, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + params.decay);
+        
+        // Oscillator component
+        if (params.wave) {
+            const osc = this.audioContext.createOscillator();
+            osc.type = params.wave;
+            osc.frequency.setValueAtTime(params.freq, now);
+            
+            // Frequency envelope for kick/tom (pitch drops)
+            if (soundType === 'bass' || soundType === 'tom') {
+                osc.frequency.exponentialRampToValueAtTime(params.freq * 0.5, now + params.decay * 0.3);
+            }
+            
+            const oscGain = this.audioContext.createGain();
+            oscGain.gain.setValueAtTime(params.noise ? (1 - params.noiseMix) : 1, now);
+            
+            osc.connect(oscGain);
+            oscGain.connect(gainNode);
+            osc.start(now);
+            osc.stop(now + params.decay);
+        }
+        
+        // Second oscillator for detuned/layered sounds (electronic kit)
+        if (params.freq2) {
+            const osc2 = this.audioContext.createOscillator();
+            osc2.type = params.wave;
+            osc2.frequency.setValueAtTime(params.freq2, now);
+            
+            if (soundType === 'bass') {
+                osc2.frequency.exponentialRampToValueAtTime(params.freq2 * 0.5, now + params.decay * 0.3);
+            }
+            
+            const osc2Gain = this.audioContext.createGain();
+            osc2Gain.gain.setValueAtTime(0.3, now);
+            
+            osc2.connect(osc2Gain);
+            osc2Gain.connect(gainNode);
+            osc2.start(now);
+            osc2.stop(now + params.decay);
+        }
+        
+        // Noise component for snare/hihat/cymbal
+        if (params.noise && this.noiseBuffer) {
+            const noise = this.audioContext.createBufferSource();
+            noise.buffer = this.noiseBuffer;
+            
+            const noiseFilter = this.audioContext.createBiquadFilter();
+            noiseFilter.type = soundType === 'cymbal' ? 'bandpass' : 'highpass';
+            noiseFilter.frequency.setValueAtTime(soundType === 'hihat' ? params.freq : 1000, now);
+            
+            const noiseGain = this.audioContext.createGain();
+            noiseGain.gain.setValueAtTime(params.noiseMix || 0.5, now);
+            
+            noise.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(gainNode);
+            noise.start(now);
+            noise.stop(now + params.decay);
+        }
     }
 }
 
@@ -84,6 +176,7 @@ class Game {
         this.defenderDamageFlash = 0;
         this.defenderLowHP = false;
         this.defenderSmokeParticles = [];
+        this.defenderStunned = 0; // Frames remaining of stun
         
         // AI settings - now scales with waves
         this.lastShotTime = 0;
@@ -113,11 +206,13 @@ class Game {
         this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
         this.stepPulse = 0;
         
-        // Instrument colors
+        // Instrument colors (supports up to 5 rows)
         this.instrumentColors = [
-            { primary: '#ff4400', secondary: '#ff6600', name: 'Bass' },
-            { primary: '#00aaff', secondary: '#ffffff', name: 'Snare' },
-            { primary: '#cc00ff', secondary: '#ff00cc', name: 'Hi-hat' }
+            { primary: '#ff4444', secondary: '#ff6600', name: 'Bass' },
+            { primary: '#4488ff', secondary: '#ffffff', name: 'Snare' },
+            { primary: '#aa44ff', secondary: '#ff00cc', name: 'Hi-hat' },
+            { primary: '#00ffff', secondary: '#00aaaa', name: 'Tom' },
+            { primary: '#ffd700', secondary: '#ffaa00', name: 'Cymbal' }
         ];
         
         // Screen shake system
@@ -481,6 +576,9 @@ class Game {
 
         // Preset pattern buttons
         this.setupPresetButtons();
+        
+        // Sound kit selector buttons
+        this.setupKitButtons();
     }
 
     toggleGridCell(row, col) {
@@ -543,6 +641,30 @@ class Game {
         }
     }
 
+    setupKitButtons() {
+        const kitButtons = {
+            'kit-808': '808',
+            'kit-acoustic': 'acoustic',
+            'kit-electronic': 'electronic'
+        };
+        
+        Object.keys(kitButtons).forEach(btnId => {
+            const btn = document.getElementById(btnId);
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    const kitName = kitButtons[btnId];
+                    this.drumMachine.setKit(kitName);
+                    
+                    // Update active state
+                    document.querySelectorAll('.kit-button').forEach(b => {
+                        b.classList.remove('active');
+                    });
+                    btn.classList.add('active');
+                });
+            }
+        });
+    }
+
     loadPreset(pattern) {
         this.clearGrid();
         for (let row = 0; row < this.gridRows; row++) {
@@ -574,6 +696,7 @@ class Game {
         this.wavePhase = 'playing';
         this.gameOver = false;
         this.defenderLowHP = false;
+        this.defenderStunned = 0;
         
         // Reset upgrades
         this.upgrades = {};
@@ -594,6 +717,14 @@ class Game {
         this.defenderSmokeParticles = [];
         this.powerUps = [];
         this.activePowerUps = { shield: 0, speedBoost: 0, rapidFire: 0, spreadShot: 0 };
+        
+        // Reset grid to 3 rows (don't keep extra rows from previous game)
+        if (this.gridRows > 3) {
+            this.gridRows = 3;
+            this.grid = this.grid.slice(0, 3);
+            this.beatFlash = this.beatFlash.slice(0, 3);
+            this.drumMachine.soundOrder = [0, 1, 2];
+        }
         
         // Reset AI for wave 1
         this.updateAIForWave();
@@ -680,19 +811,22 @@ class Game {
                 break;
                 
             case 'extraRow':
-                // Add 4th row
-                if (this.gridRows === 3) {
-                    this.gridRows = 4;
+                // Add 4th or 5th row incrementally
+                if (this.gridRows < 5) {
+                    this.gridRows++;
                     this.grid.push(Array(this.gridCols).fill(false));
                     this.beatFlash.push(Array(this.gridCols).fill(0));
-                    this.drumMachine.soundOrder.push(1); // Reuse snare for 4th row
-                    this.instrumentColors.push({
-                        primary: '#00ffff',
-                        secondary: '#00aaaa',
-                        name: 'Cyan'
-                    });
+                    
+                    if (this.gridRows === 4) {
+                        this.drumMachine.soundOrder.push(3); // Tom sound (index 3)
+                        this.createPopup(this.canvas.width/2, this.canvas.height/2, 'TOM ROW ADDED!', '#00ffff');
+                    } else if (this.gridRows === 5) {
+                        this.drumMachine.soundOrder.push(4); // Cymbal sound (index 4)
+                        this.createPopup(this.canvas.width/2, this.canvas.height/2, 'CYMBAL ROW ADDED!', '#ffd700');
+                    }
+                } else {
+                    this.createPopup(this.canvas.width/2, this.canvas.height/2, 'MAX ROWS!', '#ff0000');
                 }
-                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'EXTRA ROW!', '#00ffff');
                 break;
                 
             case 'tempoPush':
@@ -838,6 +972,9 @@ class Game {
     }
 
     moveDefender(direction) {
+        // Can't move if stunned
+        if (this.defenderStunned > 0) return;
+        
         const newX = this.defender.x + direction * this.defender.speed;
         if (newX >= 0 && newX <= this.canvas.width - this.defender.width) {
             this.defender.x = newX;
@@ -1203,25 +1340,45 @@ class Game {
                 trail: []
             });
         } else if (alien.row === 3) {
-            // 4th row (Cyan/Extra Row) — same as snare burst
-            let bulletDamage = 3;
-            if (aliensOnStep >= 2) bulletDamage = 4;
+            // Tom/Perc — Scatter Shot (5 projectiles in wide fan -30° to +30°)
+            let scatterDamage = 2; // Each projectile deals 2 damage
             
-            for (let i = 0; i < 3; i++) {
-                const spread = (i - 1) * 8;
+            const angles = [-30, -15, 0, 15, 30]; // degrees
+            for (let i = 0; i < 5; i++) {
+                const angle = angles[i];
+                const radians = (angle * Math.PI) / 180;
+                const speed = 4 * speedMultiplier;
+                
                 this.alienProjectiles.push({
-                    type: 'burst',
-                    x: alien.x + spread,
-                    y: alien.y - (i * 6),
-                    width: 6,
-                    height: 10,
-                    speed: (4 + (i * 0.5)) * speedMultiplier,
-                    damage: bulletDamage,
+                    type: 'scatter',
+                    x: alien.x,
+                    y: alien.y,
+                    vx: Math.sin(radians) * speed,
+                    vy: Math.cos(radians) * speed, // positive = downward
+                    width: 4,
+                    height: 8,
+                    speed: speed,
+                    damage: scatterDamage,
                     color: colors.primary,
                     row: alien.row,
                     aliensOnStep
                 });
             }
+        } else if (alien.row === 4) {
+            // Cymbal/FX — EMP Pulse (expanding ring stun)
+            this.alienProjectiles.push({
+                type: 'emp',
+                x: alien.x,
+                y: alien.y,
+                width: 0, // starts at 0, expands
+                speed: 2 * speedMultiplier, // expansion speed (downward drift)
+                damage: 0, // doesn't damage directly, only stuns
+                color: colors.primary,
+                row: alien.row,
+                aliensOnStep,
+                radius: 0, // current ring radius
+                maxRadius: 80 // max expansion radius
+            });
         }
         
         // Muzzle flash
@@ -1339,6 +1496,11 @@ class Game {
         if (this.defenderDamageFlash > 0) {
             this.defenderDamageFlash -= 0.05;
         }
+        
+        // Update defender stun
+        if (this.defenderStunned > 0) {
+            this.defenderStunned--;
+        }
 
         // Update defender smoke when low HP
         if (this.defenderLowHP) {
@@ -1442,9 +1604,52 @@ class Game {
                 if (!proj.trail) proj.trail = [];
                 proj.trail.push({ x: proj.x, y: proj.y });
                 if (proj.trail.length > 6) proj.trail.shift();
+            } else if (proj.type === 'scatter') {
+                // Scatter shot — moves in angled direction
+                proj.x += proj.vx;
+                proj.y += proj.vy;
+                
+                // Remove if off-screen
+                if (proj.x < 0 || proj.x > this.canvas.width) {
+                    this.alienProjectiles.splice(i, 1);
+                    continue;
+                }
+            } else if (proj.type === 'emp') {
+                // EMP pulse — expands outward
+                proj.radius += 3; // expansion rate
+                proj.y += proj.speed; // drifts down slowly
+                
+                // Check if ring reaches defender's Y level
+                const defenderCenterY = this.defender.y + this.defender.height / 2;
+                if (Math.abs(proj.y - defenderCenterY) < 10 && proj.radius > 20) {
+                    const defenderCenterX = this.defender.x + this.defender.width / 2;
+                    const dist = Math.abs(proj.x - defenderCenterX);
+                    
+                    // Check if defender is within ring radius
+                    if (dist < proj.radius && dist > proj.radius - 15) {
+                        // Stun defender for 0.5 seconds (30 frames at 60fps)
+                        this.defenderStunned = 30;
+                        this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 'STUNNED!', '#ffd700');
+                        this.addShake(5);
+                    }
+                }
+                
+                // Remove if too large or off-screen
+                if (proj.radius > proj.maxRadius || proj.y > this.canvas.height + 100) {
+                    this.alienProjectiles.splice(i, 1);
+                    continue;
+                }
             }
             
-            proj.y += proj.speed;
+            // Move projectile downward (except scatter which uses vx/vy, and emp which has custom movement)
+            if (proj.type !== 'scatter' && proj.type !== 'emp') {
+                proj.y += proj.speed;
+            }
+            
+            // Skip collision for EMP (it handles its own collision above)
+            if (proj.type === 'emp') {
+                continue;
+            }
             
             // Check direct collision with defender
             let hitDefender = false;
@@ -1959,13 +2164,33 @@ class Game {
                         this.ctx.stroke();
                         break;
                         
-                    case 3: // Cyan (Extra Row)
-                        // Draw a diamond shape
+                    case 3: // Tom/Perc - Diamond shape
                         this.ctx.beginPath();
                         this.ctx.moveTo(alien.x, alien.y - 12);
                         this.ctx.lineTo(alien.x + 12, alien.y);
                         this.ctx.lineTo(alien.x, alien.y + 12);
                         this.ctx.lineTo(alien.x - 12, alien.y);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        this.ctx.stroke();
+                        break;
+                        
+                    case 4: // Cymbal/FX - Star shape (5-pointed)
+                        this.ctx.beginPath();
+                        const starPoints = 5;
+                        const outerRadius = 15;
+                        const innerRadius = 6;
+                        for (let p = 0; p < starPoints * 2; p++) {
+                            const angle = (Math.PI * 2 * p) / (starPoints * 2) - Math.PI / 2;
+                            const radius = p % 2 === 0 ? outerRadius : innerRadius;
+                            const px = alien.x + Math.cos(angle) * radius;
+                            const py = alien.y + Math.sin(angle) * radius;
+                            if (p === 0) {
+                                this.ctx.moveTo(px, py);
+                            } else {
+                                this.ctx.lineTo(px, py);
+                            }
+                        }
                         this.ctx.closePath();
                         this.ctx.fill();
                         this.ctx.stroke();
@@ -2007,7 +2232,28 @@ class Game {
 
         // Draw defender
         const defenderFlash = this.defenderDamageFlash > 0;
-        this.ctx.fillStyle = defenderFlash ? '#ff0000' : '#00ff00';
+        const defenderStunned = this.defenderStunned > 0;
+        this.ctx.fillStyle = defenderFlash ? '#ff0000' : (defenderStunned ? '#8888ff' : '#00ff00');
+        
+        // Stun visual — yellow electric sparks
+        if (defenderStunned) {
+            for (let s = 0; s < 5; s++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 20 + Math.random() * 10;
+                const sparkX = this.defender.x + this.defender.width/2 + Math.cos(angle) * dist;
+                const sparkY = this.defender.y + this.defender.height/2 + Math.sin(angle) * dist;
+                
+                this.ctx.strokeStyle = '#ffd700';
+                this.ctx.lineWidth = 2;
+                this.ctx.globalAlpha = 0.7;
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.defender.x + this.defender.width/2, this.defender.y + this.defender.height/2);
+                this.ctx.lineTo(sparkX, sparkY);
+                this.ctx.stroke();
+            }
+            this.ctx.globalAlpha = 1;
+            this.ctx.lineWidth = 1;
+        }
         
         // Shield visual — blue pulsing ring
         if (this.activePowerUps.shield > 0) {
@@ -2254,6 +2500,37 @@ class Game {
                 this.ctx.closePath();
                 this.ctx.fill();
                 this.ctx.shadowBlur = 0;
+            } else if (proj.type === 'scatter') {
+                // Scatter Shot — small cyan bullets
+                this.ctx.shadowBlur = 6;
+                this.ctx.shadowColor = proj.color;
+                this.ctx.fillStyle = proj.color;
+                this.ctx.beginPath();
+                this.ctx.arc(proj.x, proj.y, 3, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+            } else if (proj.type === 'emp') {
+                // EMP Pulse — expanding gold ring
+                const alpha = 1 - (proj.radius / proj.maxRadius);
+                this.ctx.globalAlpha = alpha * 0.8;
+                this.ctx.strokeStyle = proj.color;
+                this.ctx.lineWidth = 4;
+                this.ctx.shadowBlur = 15;
+                this.ctx.shadowColor = proj.color;
+                this.ctx.beginPath();
+                this.ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
+                this.ctx.stroke();
+                
+                // Inner ring
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeStyle = '#ffff00';
+                this.ctx.beginPath();
+                this.ctx.arc(proj.x, proj.y, proj.radius - 5, 0, Math.PI * 2);
+                this.ctx.stroke();
+                
+                this.ctx.shadowBlur = 0;
+                this.ctx.globalAlpha = 1;
+                this.ctx.lineWidth = 1;
             } else {
                 // Default/fallback
                 this.ctx.shadowBlur = 10;

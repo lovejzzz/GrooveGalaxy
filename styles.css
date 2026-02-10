@@ -213,6 +213,50 @@ button:hover, button:active {
     grid-column: 1 / -1;
 }
 
+/* Sound Kit Selector */
+.sound-kit-selector {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #333;
+}
+
+.sound-kit-selector label {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: #00ff00;
+    text-transform: uppercase;
+}
+
+.kit-buttons {
+    display: flex;
+    gap: 5px;
+}
+
+.kit-button {
+    flex: 1;
+    padding: 8px 6px;
+    font-size: 12px;
+    min-width: unset;
+    margin: 0;
+    background-color: #000;
+    color: #00ff00;
+    border: 2px solid #333;
+    transition: all 0.3s ease;
+}
+
+.kit-button:hover {
+    background-color: #002200;
+    border-color: #00ff00;
+}
+
+.kit-button.active {
+    background-color: #00ff00;
+    color: #000;
+    border-color: #00ff00;
+    font-weight: bold;
+}
+
 /* Mobile touch controls */
 #mobile-controls {
     display: none;
@@ -348,5 +392,25 @@ button:hover, button:active {
     button {
         padding: 8px 12px;
         font-size: 13px;
+    }
+
+    .sound-kit-selector {
+        margin-top: 6px;
+        padding-top: 6px;
+        width: 100%;
+    }
+
+    .sound-kit-selector label {
+        font-size: 10px;
+        margin-bottom: 4px;
+    }
+
+    .kit-buttons {
+        gap: 4px;
+    }
+
+    .kit-button {
+        padding: 6px 4px;
+        font-size: 10px;
     }
 }
