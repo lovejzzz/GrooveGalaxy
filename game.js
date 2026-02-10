@@ -96,6 +96,33 @@ class Game {
         this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
         this.stepPulse = 0;
         
+        // NEW: Instrument colors
+        this.instrumentColors = [
+            { primary: '#ff4400', secondary: '#ff6600', name: 'Bass' },      // Red/orange
+            { primary: '#00aaff', secondary: '#ffffff', name: 'Snare' },     // Blue/white
+            { primary: '#cc00ff', secondary: '#ff00cc', name: 'Hi-hat' }     // Purple/magenta
+        ];
+        
+        // NEW: Screen shake system
+        this.shake = { x: 0, y: 0, intensity: 0, decay: 0.85 };
+        
+        // NEW: Freeze frame system
+        this.freezeFrames = 0;
+        
+        // NEW: Debris system
+        this.debris = [];
+        this.maxDebris = 100;
+        
+        // NEW: Starfield
+        this.stars = [];
+        this.initStarfield();
+        
+        // NEW: Intensity tracking for chaos
+        this.intensity = 0;
+        
+        // NEW: Kill text popups
+        this.popups = [];
+        
         // Particles for sound visualization
         this.particles = [];
         
@@ -126,6 +153,20 @@ class Game {
         // Setup event listeners (called once in constructor)
         this.setupEventListeners();
         this.setupMobileControls();
+    }
+
+    // NEW: Initialize starfield
+    initStarfield() {
+        for (let i = 0; i < 100; i++) {
+            this.stars.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height,
+                size: Math.random() * 2 + 0.5,
+                speed: Math.random() * 0.5 + 0.2,
+                brightness: Math.random() * 0.5 + 0.5,
+                pulse: 0
+            });
+        }
     }
 
     setupMobileControls() {
@@ -262,8 +303,8 @@ class Game {
 
         const presetsContainer = document.createElement('div');
         presetsContainer.innerHTML = `
-            <div style="margin-top: 15px; padding: 10px; border: 1px solid #00ff00; background-color: rgba(0, 255, 0, 0.05);">
-                <label style="display: block; margin-bottom: 10px;">Preset Patterns:</label>
+            <div style="margin-top: 15px; padding: 10px; border: 1px solid #333; background-color: rgba(255, 255, 255, 0.03);">
+                <label style="display: block; margin-bottom: 10px; color: #00ff00;">Preset Patterns:</label>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
                     <button id="preset-rock" style="margin: 0;">Rock</button>
                     <button id="preset-funk" style="margin: 0;">Funk</button>
@@ -364,7 +405,8 @@ class Game {
             y: this.defender.y,
             width: 4,
             height: 10,
-            speed: 10
+            speed: 10,
+            trail: [] // NEW: Bullet trail
         });
     }
 
@@ -381,8 +423,61 @@ class Game {
         }
     }
 
+    // NEW: Add screen shake
+    addShake(intensity) {
+        this.shake.intensity += intensity;
+    }
+
+    // NEW: Trigger freeze frame
+    freezeFrame(frames = 3) {
+        this.freezeFrames = frames;
+    }
+
+    // NEW: Create debris when alien dies
+    createDebris(x, y, row) {
+        const colors = this.instrumentColors[row];
+        const numFragments = 10;
+        
+        for (let i = 0; i < numFragments; i++) {
+            if (this.debris.length >= this.maxDebris) break;
+            
+            const angle = (Math.PI * 2 * i) / numFragments + (Math.random() - 0.5) * 0.5;
+            const speed = Math.random() * 5 + 3;
+            
+            this.debris.push({
+                x, y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 2,
+                rotation: Math.random() * Math.PI * 2,
+                rotationSpeed: (Math.random() - 0.5) * 0.3,
+                size: Math.random() * 6 + 4,
+                color: Math.random() > 0.5 ? colors.primary : colors.secondary,
+                life: 1.0,
+                bounced: false
+            });
+        }
+    }
+
+    // NEW: Create floating text popup
+    createPopup(x, y, text, isOnBeat) {
+        this.popups.push({
+            x, y,
+            text,
+            life: 60,
+            vy: -1.5,
+            color: isOnBeat ? '#ffff00' : '#00ff00',
+            scale: isOnBeat ? 1.5 : 1.0
+        });
+    }
+
     update() {
         if (this.isPaused) return;
+
+        // NEW: Freeze frame handling
+        if (this.freezeFrames > 0) {
+            this.freezeFrames--;
+            return; // Skip update during freeze
+        }
 
         // Handle mobile touch controls
         if (this.touchControls.left) this.moveDefender(-1);
@@ -393,9 +488,44 @@ class Game {
             this.updateAI();
         }
 
+        // NEW: Calculate intensity (active beats / total possible)
+        const totalBeats = this.aliens.filter(a => a.alive).length;
+        this.intensity = totalBeats / (this.gridRows * this.gridCols);
+
+        // NEW: Update screen shake
+        if (this.shake.intensity > 0.1) {
+            this.shake.x = (Math.random() - 0.5) * this.shake.intensity;
+            this.shake.y = (Math.random() - 0.5) * this.shake.intensity;
+            this.shake.intensity *= this.shake.decay;
+        } else {
+            this.shake.x = 0;
+            this.shake.y = 0;
+            this.shake.intensity = 0;
+        }
+
+        // NEW: Update starfield
+        const starSpeed = 0.5 + (this.bpm / 120) * 0.5 + this.intensity * 2;
+        for (const star of this.stars) {
+            star.y += star.speed * starSpeed;
+            if (star.y > this.canvas.height) {
+                star.y = 0;
+                star.x = Math.random() * this.canvas.width;
+            }
+            
+            // Decay pulse
+            if (star.pulse > 0) {
+                star.pulse -= 0.05;
+            }
+        }
+
         // Update bullets
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const bullet = this.bullets[i];
+            
+            // NEW: Store trail positions
+            bullet.trail.push({ x: bullet.x, y: bullet.y });
+            if (bullet.trail.length > 5) bullet.trail.shift();
+            
             bullet.y -= bullet.speed;
             
             // Check for collisions with aliens
@@ -411,10 +541,19 @@ class Game {
                         this.score += this.onBeatBonus;
                         this.combo++;
                         if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                        this.createPopup(alien.x, alien.y, `+${this.onBeatBonus} ON BEAT!`, true);
                     } else {
                         this.score += this.normalHitScore;
                         this.combo = 0;
+                        this.createPopup(alien.x, alien.y, `+${this.normalHitScore}`, false);
                     }
+                    
+                    // NEW: Trigger freeze frame and shake on kill
+                    this.freezeFrame(2);
+                    this.addShake(6 * (1 + this.intensity));
+                    
+                    // NEW: Create debris
+                    this.createDebris(alien.x, alien.y, alien.row);
                     
                     // Remove alien permanently (clears from drum pattern)
                     this.grid[alien.row][alien.col] = false;
@@ -429,6 +568,42 @@ class Game {
             // Remove bullets that are off screen
             if (!hitAlien && bullet.y < 0) {
                 this.bullets.splice(i, 1);
+            }
+        }
+
+        // NEW: Update debris
+        for (let i = this.debris.length - 1; i >= 0; i--) {
+            const d = this.debris[i];
+            d.x += d.vx;
+            d.y += d.vy;
+            d.vy += 0.3; // gravity
+            d.rotation += d.rotationSpeed;
+            d.life -= 0.008;
+            
+            // Bounce off bottom
+            if (d.y > this.canvas.height - 5 && d.vy > 0) {
+                d.vy *= -0.5;
+                d.vx *= 0.8;
+                if (!d.bounced) d.bounced = true;
+            }
+            
+            // Bounce off walls
+            if (d.x < 0 || d.x > this.canvas.width) {
+                d.vx *= -0.8;
+            }
+            
+            if (d.life <= 0) {
+                this.debris.splice(i, 1);
+            }
+        }
+
+        // NEW: Update popups
+        for (let i = this.popups.length - 1; i >= 0; i--) {
+            const p = this.popups[i];
+            p.y += p.vy;
+            p.life--;
+            if (p.life <= 0) {
+                this.popups.splice(i, 1);
             }
         }
 
@@ -447,6 +622,19 @@ class Game {
                         this.drumMachine.playSound(row);
                         this.beatFlash[row][this.currentStep] = 1.0;
                         this.createSoundParticles(alien.x, alien.y, row);
+                        
+                        // NEW: Screen shake per instrument
+                        const shakeIntensities = [
+                            8 + this.intensity * 4,  // Bass - heavy
+                            5,                        // Snare - sharp
+                            2                         // Hi-hat - subtle
+                        ];
+                        this.addShake(shakeIntensities[row]);
+                        
+                        // NEW: Pulse stars on beat
+                        this.stars.forEach(star => {
+                            if (Math.random() < 0.3) star.pulse = 1.0;
+                        });
                     }
                 }
             }
@@ -479,8 +667,7 @@ class Game {
     }
 
     createSoundParticles(x, y, row) {
-        const colors = ['#00ff00', '#00cc00', '#00aa00'];
-        const color = colors[row % colors.length];
+        const colors = this.instrumentColors[row];
         
         for (let i = 0; i < 8; i++) {
             const angle = (Math.PI * 2 * i) / 8;
@@ -489,7 +676,7 @@ class Game {
                 vx: Math.cos(angle) * 2,
                 vy: Math.sin(angle) * 2 - 1,
                 life: 20,
-                color
+                color: Math.random() > 0.5 ? colors.primary : colors.secondary
             });
         }
     }
@@ -505,7 +692,7 @@ class Game {
         
         // Create explosion particles
         const numParticles = isOnBeat ? 20 : 12;
-        const colors = isOnBeat ? ['#00ff00', '#ffff00', '#ff00ff'] : ['#00ff00', '#00cc00'];
+        const colors = isOnBeat ? ['#ffff00', '#ff00ff', '#00ffff'] : ['#ff4400', '#00aaff', '#cc00ff'];
         
         for (let i = 0; i < numParticles; i++) {
             const angle = (Math.PI * 2 * i) / numParticles;
@@ -529,17 +716,71 @@ class Game {
     }
 
     draw() {
+        // Save context for shake transform
+        this.ctx.save();
+        
+        // NEW: Apply screen shake
+        this.ctx.translate(this.shake.x, this.shake.y);
+        
         // Clear canvas
         this.ctx.fillStyle = '#000000';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.fillRect(-10, -10, this.canvas.width + 20, this.canvas.height + 20);
 
-        // Draw grid with beat flash
+        // NEW: Draw starfield
+        for (const star of this.stars) {
+            const brightness = star.brightness + star.pulse * 0.5;
+            this.ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+            this.ctx.beginPath();
+            this.ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        // NEW: Draw beat column flash
+        if (this.stepPulse > 0) {
+            for (let row = 0; row < this.gridRows; row++) {
+                if (this.grid[row][this.currentStep]) {
+                    const colors = this.instrumentColors[row];
+                    const gradient = this.ctx.createLinearGradient(
+                        this.currentStep * this.cellWidth,
+                        this.gridYOffset,
+                        this.currentStep * this.cellWidth + this.cellWidth,
+                        this.gridYOffset + this.gridRows * this.cellHeight
+                    );
+                    gradient.addColorStop(0, `${colors.primary}40`);
+                    gradient.addColorStop(1, `${colors.secondary}40`);
+                    
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.globalAlpha = this.stepPulse * 0.4;
+                    this.ctx.fillRect(
+                        this.currentStep * this.cellWidth,
+                        this.gridYOffset,
+                        this.cellWidth,
+                        this.gridRows * this.cellHeight
+                    );
+                    this.ctx.globalAlpha = 1;
+                }
+            }
+        }
+
+        // Draw grid with beat flash (NEW: dark gray grid lines)
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
                 const flashIntensity = this.beatFlash[row][col];
                 
                 if (flashIntensity > 0) {
-                    this.ctx.fillStyle = `rgba(0, 255, 0, ${flashIntensity * 0.3})`;
+                    const colors = this.instrumentColors[row];
+                    const gradient = this.ctx.createRadialGradient(
+                        col * this.cellWidth + this.cellWidth / 2,
+                        row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                        0,
+                        col * this.cellWidth + this.cellWidth / 2,
+                        row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                        this.cellWidth
+                    );
+                    gradient.addColorStop(0, `${colors.primary}${Math.floor(flashIntensity * 100).toString(16).padStart(2, '0')}`);
+                    gradient.addColorStop(1, 'transparent');
+                    
+                    this.ctx.fillStyle = gradient;
                     this.ctx.fillRect(
                         col * this.cellWidth,
                         row * this.cellHeight + this.gridYOffset,
@@ -548,7 +789,8 @@ class Game {
                     );
                 }
                 
-                this.ctx.strokeStyle = col % 4 === 0 ? '#008800' : '#00ff00';
+                // NEW: Dark gray grid lines
+                this.ctx.strokeStyle = col % 4 === 0 ? '#444444' : '#333333';
                 this.ctx.strokeRect(
                     col * this.cellWidth,
                     row * this.cellHeight + this.gridYOffset,
@@ -570,19 +812,20 @@ class Game {
         );
         this.ctx.lineWidth = 1;
 
-        // Draw aliens
+        // Draw aliens (NEW: colored by instrument)
         for (const alien of this.aliens) {
             if (alien.alive) {
-                this.ctx.fillStyle = '#00ff00';
+                const colors = this.instrumentColors[alien.row];
+                this.ctx.fillStyle = colors.primary;
+                this.ctx.strokeStyle = colors.secondary;
+                this.ctx.lineWidth = 2;
                 
                 switch(alien.row) {
                     case 0: // Bass - Heavy battleship
-                        this.ctx.beginPath();
-                        this.ctx.rect(alien.x - 20, alien.y - 8, 40, 16);
-                        this.ctx.fill();
-                        this.ctx.beginPath();
-                        this.ctx.rect(alien.x - 10, alien.y - 12, 20, 8);
-                        this.ctx.fill();
+                        this.ctx.fillRect(alien.x - 20, alien.y - 8, 40, 16);
+                        this.ctx.strokeRect(alien.x - 20, alien.y - 8, 40, 16);
+                        this.ctx.fillRect(alien.x - 10, alien.y - 12, 20, 8);
+                        this.ctx.strokeRect(alien.x - 10, alien.y - 12, 20, 8);
                         this.ctx.beginPath();
                         this.ctx.moveTo(alien.x - 20, alien.y);
                         this.ctx.lineTo(alien.x - 25, alien.y + 5);
@@ -602,24 +845,29 @@ class Game {
                         this.ctx.lineTo(alien.x - 15, alien.y + 5);
                         this.ctx.closePath();
                         this.ctx.fill();
+                        this.ctx.stroke();
                         this.ctx.beginPath();
                         this.ctx.arc(alien.x, alien.y - 5, 5, 0, Math.PI * 2);
                         this.ctx.fill();
+                        this.ctx.stroke();
                         break;
                         
                     case 2: // Hi-hat - Classic UFO
                         this.ctx.beginPath();
                         this.ctx.ellipse(alien.x, alien.y, 20, 8, 0, 0, Math.PI * 2);
                         this.ctx.fill();
+                        this.ctx.stroke();
                         this.ctx.beginPath();
                         this.ctx.ellipse(alien.x, alien.y - 5, 10, 10, 0, Math.PI, 0);
                         this.ctx.fill();
+                        this.ctx.stroke();
                         break;
                 }
+                this.ctx.lineWidth = 1;
             }
         }
 
-        // Draw defender
+        // Draw defender (stays green)
         this.ctx.fillStyle = '#00ff00';
         this.ctx.fillRect(
             this.defender.x,
@@ -643,12 +891,38 @@ class Game {
             12
         );
 
-        // Draw bullets
-        this.ctx.fillStyle = '#00ff00';
+        // NEW: Draw bullets with trails
         for (const bullet of this.bullets) {
+            // Draw trail
+            for (let i = 0; i < bullet.trail.length; i++) {
+                const t = bullet.trail[i];
+                const alpha = (i + 1) / bullet.trail.length * 0.5;
+                this.ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
+                this.ctx.beginPath();
+                this.ctx.arc(t.x, t.y, bullet.width / 2, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+            
+            // Draw bullet with glow
+            this.ctx.shadowBlur = 10;
+            this.ctx.shadowColor = '#00ff00';
+            this.ctx.fillStyle = '#00ff00';
             this.ctx.fillRect(bullet.x - bullet.width/2, bullet.y, 
                             bullet.width, bullet.height);
+            this.ctx.shadowBlur = 0;
         }
+
+        // NEW: Draw debris
+        for (const d of this.debris) {
+            this.ctx.save();
+            this.ctx.translate(d.x, d.y);
+            this.ctx.rotate(d.rotation);
+            this.ctx.globalAlpha = d.life;
+            this.ctx.fillStyle = d.color;
+            this.ctx.fillRect(-d.size/2, -d.size/2, d.size, d.size);
+            this.ctx.restore();
+        }
+        this.ctx.globalAlpha = 1;
 
         // Draw particles
         for (const p of this.particles) {
@@ -696,6 +970,21 @@ class Game {
             }
         }
 
+        // NEW: Draw popups
+        this.ctx.font = 'bold 16px "Courier New"';
+        for (const p of this.popups) {
+            const alpha = p.life / 60;
+            this.ctx.globalAlpha = alpha;
+            this.ctx.fillStyle = p.color;
+            this.ctx.save();
+            this.ctx.translate(p.x, p.y);
+            this.ctx.scale(p.scale, p.scale);
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(p.text, 0, 0);
+            this.ctx.restore();
+        }
+        this.ctx.globalAlpha = 1;
+
         // Draw score
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = '20px "Courier New"';
@@ -708,6 +997,13 @@ class Game {
         
         this.ctx.fillStyle = '#00ff00';
         this.ctx.fillText(`Max Combo: ${this.maxCombo}`, 10, 80);
+        
+        // Restore context after shake
+        this.ctx.restore();
+        
+        // NEW: Apply intensity-based glow to canvas via CSS
+        const glowIntensity = Math.floor(this.intensity * 20);
+        this.canvas.style.boxShadow = `0 0 ${glowIntensity}px rgba(0, 255, 0, ${this.intensity * 0.5})`;
     }
 
     animate() {
