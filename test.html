@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test</title>
+</head>
+<body>
+    <h1>Testing game load</h1>
+    <script>
+        console.log("Script loading...");
+        fetch('game.js')
+            .then(r => r.text())
+            .then(code => {
+                console.log("Game.js loaded, length:", code.length);
+                console.log("First 100 chars:", code.substring(0, 100));
+            });
+    </script>
+</body>
+</html>

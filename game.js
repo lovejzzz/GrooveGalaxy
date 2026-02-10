@@ -1344,13 +1344,13 @@ class Game {
         this.ctx.lineWidth = 2;
         this.ctx.strokeRect(bottomBarX, bottomBarY, bottomBarWidth, 15);
         
-        const hpPercent = Math.max(0, this.defenderHP / this.defenderMaxHP);
-        let hpColor = '#00ff00';
-        if (hpPercent <= 0.25) hpColor = '#ff0000';
-        else if (hpPercent <= 0.5) hpColor = '#ffff00';
+        const bottomHpPercent = Math.max(0, this.defenderHP / this.defenderMaxHP);
+        let bottomHpColor = '#00ff00';
+        if (bottomHpPercent <= 0.25) bottomHpColor = '#ff0000';
+        else if (bottomHpPercent <= 0.5) bottomHpColor = '#ffff00';
         
-        this.ctx.fillStyle = hpColor;
-        this.ctx.fillRect(bottomBarX + 2, bottomBarY + 2, (bottomBarWidth - 4) * hpPercent, 11);
+        this.ctx.fillStyle = bottomHpColor;
+        this.ctx.fillRect(bottomBarX + 2, bottomBarY + 2, (bottomBarWidth - 4) * bottomHpPercent, 11);
         
         this.ctx.fillStyle = '#ffffff';
         this.ctx.font = 'bold 12px "Courier New"';

@@ -24,6 +24,8 @@ body {
 
 .canvas-wrapper {
     position: relative;
+    flex: 1;
+    min-width: 0;
 }
 
 /* NEW: CRT effect overlay */
@@ -70,8 +72,9 @@ body {
 canvas {
     border: 2px solid #00ff00;
     background-color: #000;
-    max-width: 100%;
+    width: 100%;
     height: auto;
+    display: block;
     /* NEW: Slight screen curvature illusion */
     border-radius: 8px;
     /* Dynamic glow applied via JS */
