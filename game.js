@@ -1852,6 +1852,16 @@ class Game {
             }
         }
 
+        // Check if all aliens are dead — player loses!
+        if (this.wavePhase === 'playing' && this.aliens.length > 0) {
+            const anyAlive = this.aliens.some(a => a && a.alive);
+            // Also check if any are about to respawn (quick respawn upgrade)
+            const anyRespawning = this.upgrades.quickRespawn && this.aliens.some(a => a && !a.alive && a.respawnIn > 0);
+            if (!anyAlive && !anyRespawning) {
+                this.gameLost();
+            }
+        }
+
         // Update alien projectiles
         for (let i = this.alienProjectiles.length - 1; i >= 0; i--) {
             const proj = this.alienProjectiles[i];
@@ -2121,22 +2131,18 @@ class Game {
                 }
                 
                 if (this.currentLoop > this.loopsPerWave) {
-                    // STRATEGY: Mark surviving aliens for evolution
+                    // STRATEGY: Mark surviving aliens for evolution every loopsPerWave loops
                     for (const alien of this.aliens) {
                         if (alien && alien.alive) {
                             this.evolvedCells.add(`${alien.row},${alien.col}`);
                         }
                     }
-                    
-                    // Wave completed
-                    if (this.defenderHP > 0) {
-                        // Player loses - defender survived
-                        this.gameLost();
-                    }
-                } else {
-                    // Respawn aliens for next loop
-                    this.respawnAliens();
+                    // Reset loop counter but keep going — no time limit!
+                    // Player only loses when ALL aliens die
+                    this.currentLoop = 1;
                 }
+                // Respawn aliens for next loop
+                this.respawnAliens();
             }
             
             this.stepPulse = 1.0;
@@ -3443,7 +3449,7 @@ class Game {
             this.ctx.fillStyle = '#ff0000';
             this.ctx.font = 'bold 48px "Courier New"';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('DEFENSE HELD', this.canvas.width / 2, this.canvas.height / 2 - 80);
+            this.ctx.fillText('ARMY WIPED OUT', this.canvas.width / 2, this.canvas.height / 2 - 80);
             
             this.ctx.fillStyle = '#ffffff';
             this.ctx.font = 'bold 32px "Courier New"';
