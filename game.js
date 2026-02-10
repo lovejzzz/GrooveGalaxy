@@ -154,6 +154,15 @@ class Game {
         // NEW: Muzzle flashes when aliens shoot
         this.muzzleFlashes = [];
         
+        // NEW: Power-up system
+        this.powerUps = [];
+        this.activePowerUps = {
+            shield: 0, // hits remaining
+            speedBoost: 0, // frames remaining
+            rapidFire: 0, // frames remaining
+            spreadShot: 0  // frames remaining
+        };
+        
         this.gameOver = false;
         this.isPaused = false;
         this.isStarted = false;
@@ -388,6 +397,8 @@ class Game {
         this.popups = [];
         this.muzzleFlashes = [];
         this.defenderSmokeParticles = [];
+        this.powerUps = [];
+        this.activePowerUps = { shield: 0, speedBoost: 0, rapidFire: 0, spreadShot: 0 };
         
         // Reset AI for wave 1
         this.updateAIForWave();
@@ -545,7 +556,8 @@ class Game {
         
         // Shooting logic (independent of movement)
         const currentTime = Date.now();
-        if (currentTime - this.lastShotTime >= this.shotDelay) {
+        const effectiveShotDelay = this.activePowerUps.rapidFire > 0 ? this.shotDelay / 2 : this.shotDelay;
+        if (currentTime - this.lastShotTime >= effectiveShotDelay) {
             const aliveAliens = this.aliens.filter(a => a.alive);
             if (aliveAliens.length > 0 && Math.random() < this.aiAccuracy) {
                 for (let i = 0; i < this.aiShotsPerTurn; i++) {
@@ -554,17 +566,90 @@ class Game {
             }
             this.lastShotTime = currentTime;
         }
+        
+        // Try to collect nearby power-ups when safe
+        if (this.powerUps.length > 0 && currentThreat < 0.2) {
+            let nearestPowerUp = null;
+            let minDist = Infinity;
+            
+            for (const powerUp of this.powerUps) {
+                const dist = Math.abs(powerUp.x - defenderCenter);
+                if (dist < minDist && powerUp.y > this.defender.y - 100) {
+                    minDist = dist;
+                    nearestPowerUp = powerUp;
+                }
+            }
+            
+            if (nearestPowerUp && minDist < 150) {
+                const powerUpDir = nearestPowerUp.x > defenderCenter ? 1 : -1;
+                if (moveDir === 0) moveDir = powerUpDir;
+            }
+        }
     }
 
     shoot() {
-        this.bullets.push({
-            x: this.defender.x + this.defender.width / 2,
-            y: this.defender.y,
-            width: 4,
-            height: 10,
-            speed: 10,
-            trail: []
-        });
+        // Spread shot fires 3 bullets in a fan
+        if (this.activePowerUps.spreadShot > 0) {
+            const angles = [-15, 0, 15]; // degrees
+            for (const angle of angles) {
+                const radians = (angle * Math.PI) / 180;
+                this.bullets.push({
+                    x: this.defender.x + this.defender.width / 2,
+                    y: this.defender.y,
+                    width: 4,
+                    height: 10,
+                    speed: 10,
+                    vx: Math.sin(radians) * 10,
+                    vy: -Math.cos(radians) * 10,
+                    trail: []
+                });
+            }
+        } else {
+            // Normal single shot
+            this.bullets.push({
+                x: this.defender.x + this.defender.width / 2,
+                y: this.defender.y,
+                width: 4,
+                height: 10,
+                speed: 10,
+                vx: 0,
+                vy: -10,
+                trail: []
+            });
+        }
+    }
+
+    collectPowerUp(powerUp) {
+        switch (powerUp.type) {
+            case 'repair':
+                this.defenderHP = Math.min(this.defenderHP + 10, this.defenderMaxHP);
+                this.createPopup(powerUp.x, powerUp.y, '+10 HP', '#ff0000');
+                if (this.defenderHP > this.defenderMaxHP * 0.25) {
+                    this.defenderLowHP = false;
+                }
+                break;
+            case 'shield':
+                this.activePowerUps.shield += 2;
+                this.createPopup(powerUp.x, powerUp.y, 'SHIELD +2', '#0088ff');
+                break;
+            case 'speed':
+                this.activePowerUps.speedBoost = 600; // 10 seconds at 60fps
+                const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
+                this.defender.speed = Math.round(5 * speedScale) * 2;
+                this.createPopup(powerUp.x, powerUp.y, 'SPEED BOOST!', '#ffff00');
+                break;
+            case 'rapidfire':
+                this.activePowerUps.rapidFire = 600; // 10 seconds
+                this.createPopup(powerUp.x, powerUp.y, 'RAPID FIRE!', '#00ff00');
+                break;
+            case 'spread':
+                this.activePowerUps.spreadShot = 600; // 10 seconds
+                this.createPopup(powerUp.x, powerUp.y, 'SPREAD SHOT!', '#ff8800');
+                break;
+        }
+        
+        // Visual/audio feedback
+        this.createExplosion(powerUp.x, powerUp.y, true);
     }
 
     togglePause() {
@@ -632,29 +717,117 @@ class Game {
         });
     }
 
+    dropPowerUp(x, y) {
+        // Determine drop rate based on wave
+        let dropChance = 0.2; // 20% default
+        if (this.currentWave >= 6) dropChance = 0.4; // 40%
+        else if (this.currentWave >= 3) dropChance = 0.3; // 30%
+        
+        if (Math.random() > dropChance) return; // No drop
+        
+        // Weighted random selection
+        const types = [
+            { name: 'repair', weight: 30, color: '#ff0000', symbol: '+' },
+            { name: 'shield', weight: 15, color: '#0088ff', symbol: '🛡' },
+            { name: 'speed', weight: 20, color: '#ffff00', symbol: '⚡' },
+            { name: 'rapidfire', weight: 20, color: '#00ff00', symbol: '▶▶' },
+            { name: 'spread', weight: 15, color: '#ff8800', symbol: '◀▶' }
+        ];
+        
+        const totalWeight = types.reduce((sum, t) => sum + t.weight, 0);
+        let rand = Math.random() * totalWeight;
+        let selectedType = types[0];
+        
+        for (const type of types) {
+            rand -= type.weight;
+            if (rand <= 0) {
+                selectedType = type;
+                break;
+            }
+        }
+        
+        this.powerUps.push({
+            x, y,
+            width: 20,
+            height: 20,
+            type: selectedType.name,
+            color: selectedType.color,
+            symbol: selectedType.symbol,
+            speed: 1.5,
+            pulse: 0
+        });
+    }
+
     alienShoot(alien) {
         // Count aliens on same column
         const aliensOnStep = this.aliens.filter(a => 
             a.col === alien.col && a.alive
         ).length;
         
-        // Damage scales with crossfire
-        let damage = 5;
-        if (aliensOnStep === 2) damage = 8;
-        if (aliensOnStep === 3) damage = 12;
-        
         const colors = this.instrumentColors[alien.row];
-        this.alienProjectiles.push({
-            x: alien.x,
-            y: alien.y,
-            width: 6,
-            height: 12,
-            speed: 4,
-            damage,
-            color: colors.primary,
-            row: alien.row,
-            aliensOnStep
-        });
+        
+        // Different weapons based on row/instrument
+        if (alien.row === 0) {
+            // Bass — Heavy Cannon
+            let baseDamage = 12;
+            if (aliensOnStep === 2) baseDamage = 15;
+            if (aliensOnStep === 3) baseDamage = 18;
+            
+            this.alienProjectiles.push({
+                type: 'cannon',
+                x: alien.x,
+                y: alien.y,
+                width: 16,
+                height: 16,
+                speed: 2,
+                damage: baseDamage,
+                color: colors.primary,
+                row: alien.row,
+                aliensOnStep,
+                trail: []
+            });
+        } else if (alien.row === 1) {
+            // Snare — Burst Fire (3 bullets)
+            let bulletDamage = 3;
+            if (aliensOnStep >= 2) bulletDamage = 4;
+            
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                    const spread = (i - 1) * 8; // -8, 0, +8 pixels
+                    this.alienProjectiles.push({
+                        type: 'burst',
+                        x: alien.x + spread,
+                        y: alien.y,
+                        width: 6,
+                        height: 10,
+                        speed: 4,
+                        damage: bulletDamage,
+                        color: colors.primary,
+                        row: alien.row,
+                        aliensOnStep
+                    });
+                }, i * 100); // 100ms delay between bullets
+            }
+        } else if (alien.row === 2) {
+            // Hi-hat — Homing Missile
+            let homingDamage = 6;
+            if (aliensOnStep === 2) homingDamage = 8;
+            if (aliensOnStep === 3) homingDamage = 10;
+            
+            this.alienProjectiles.push({
+                type: 'homing',
+                x: alien.x,
+                y: alien.y,
+                width: 8,
+                height: 12,
+                speed: 3,
+                damage: homingDamage,
+                color: colors.primary,
+                row: alien.row,
+                aliensOnStep,
+                trail: []
+            });
+        }
         
         // Muzzle flash
         this.createMuzzleFlash(alien.x, alien.y, alien.row);
@@ -769,7 +942,13 @@ class Game {
             bullet.trail.push({ x: bullet.x, y: bullet.y });
             if (bullet.trail.length > 5) bullet.trail.shift();
             
-            bullet.y -= bullet.speed;
+            // Use vx/vy if available (for spread shot), otherwise use speed
+            if (bullet.vx !== undefined && bullet.vy !== undefined) {
+                bullet.x += bullet.vx;
+                bullet.y += bullet.vy;
+            } else {
+                bullet.y -= bullet.speed;
+            }
             
             let hitAlien = false;
             for (let j = 0; j < this.aliens.length; j++) {
@@ -780,6 +959,10 @@ class Game {
                     this.createDebris(alien.x, alien.y, alien.row);
                     this.createExplosion(alien.x, alien.y, false);
                     this.addShake(4);
+                    
+                    // Drop power-up chance
+                    this.dropPowerUp(alien.x, alien.y);
+                    
                     this.bullets.splice(i, 1);
                     hitAlien = true;
                     break;
@@ -794,13 +977,63 @@ class Game {
         // Update alien projectiles
         for (let i = this.alienProjectiles.length - 1; i >= 0; i--) {
             const proj = this.alienProjectiles[i];
+            
+            // Handle different projectile behaviors
+            if (proj.type === 'homing') {
+                // Homing missile — track defender
+                const defenderCenterX = this.defender.x + this.defender.width / 2;
+                const dx = defenderCenterX - proj.x;
+                proj.x += Math.sign(dx) * Math.min(Math.abs(dx), 0.5); // Track at 0.5px/frame
+                
+                // Trail for homing missiles
+                if (!proj.trail) proj.trail = [];
+                proj.trail.push({ x: proj.x, y: proj.y });
+                if (proj.trail.length > 8) proj.trail.shift();
+            } else if (proj.type === 'cannon') {
+                // Heavy cannon — add trail
+                if (!proj.trail) proj.trail = [];
+                proj.trail.push({ x: proj.x, y: proj.y });
+                if (proj.trail.length > 6) proj.trail.shift();
+            }
+            
             proj.y += proj.speed;
             
-            // Check collision with defender
+            // Check direct collision with defender
+            let hitDefender = false;
             if (proj.y >= this.defender.y && 
                 proj.y <= this.defender.y + this.defender.height &&
                 proj.x >= this.defender.x &&
                 proj.x <= this.defender.x + this.defender.width) {
+                hitDefender = true;
+            }
+            
+            // Heavy cannon blast radius
+            if (proj.type === 'cannon' && !hitDefender) {
+                const defenderCenterX = this.defender.x + this.defender.width / 2;
+                const defenderCenterY = this.defender.y + this.defender.height / 2;
+                const dist = Math.sqrt(
+                    Math.pow(proj.x - defenderCenterX, 2) + 
+                    Math.pow(proj.y - defenderCenterY, 2)
+                );
+                
+                if (dist < 30) {
+                    // Near miss — half damage
+                    hitDefender = true;
+                    proj.damage = Math.floor(proj.damage / 2);
+                    this.createPopup(proj.x, proj.y, 'BLAST!', '#ff6600');
+                }
+            }
+            
+            if (hitDefender) {
+                // Check shield first
+                if (this.activePowerUps.shield > 0) {
+                    this.activePowerUps.shield--;
+                    this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 
+                        'BLOCKED!', '#0088ff');
+                    this.createExplosion(proj.x, proj.y, false);
+                    this.alienProjectiles.splice(i, 1);
+                    continue;
+                }
                 
                 // Defender takes damage!
                 this.defenderHP -= proj.damage;
@@ -884,6 +1117,43 @@ class Game {
             if (this.muzzleFlashes[i].life <= 0) {
                 this.muzzleFlashes.splice(i, 1);
             }
+        }
+
+        // Update power-ups
+        for (let i = this.powerUps.length - 1; i >= 0; i--) {
+            const powerUp = this.powerUps[i];
+            powerUp.y += powerUp.speed;
+            powerUp.pulse = (powerUp.pulse + 0.1) % (Math.PI * 2);
+            
+            // Check collision with defender
+            if (powerUp.y >= this.defender.y && 
+                powerUp.y <= this.defender.y + this.defender.height &&
+                powerUp.x >= this.defender.x - 10 &&
+                powerUp.x <= this.defender.x + this.defender.width + 10) {
+                
+                // Collect power-up!
+                this.collectPowerUp(powerUp);
+                this.powerUps.splice(i, 1);
+            } else if (powerUp.y > this.canvas.height) {
+                // Missed power-up
+                this.powerUps.splice(i, 1);
+            }
+        }
+
+        // Update active power-up timers
+        if (this.activePowerUps.speedBoost > 0) {
+            this.activePowerUps.speedBoost--;
+            if (this.activePowerUps.speedBoost === 0) {
+                // Restore normal speed
+                const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
+                this.defender.speed = Math.round(5 * speedScale);
+            }
+        }
+        if (this.activePowerUps.rapidFire > 0) {
+            this.activePowerUps.rapidFire--;
+        }
+        if (this.activePowerUps.spreadShot > 0) {
+            this.activePowerUps.spreadShot--;
         }
 
         // Update drum sequence
@@ -1197,6 +1467,42 @@ class Game {
         const defenderFlash = this.defenderDamageFlash > 0;
         this.ctx.fillStyle = defenderFlash ? '#ff0000' : '#00ff00';
         
+        // Shield visual — blue pulsing ring
+        if (this.activePowerUps.shield > 0) {
+            const shieldPulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+            this.ctx.strokeStyle = '#0088ff';
+            this.ctx.lineWidth = 3;
+            this.ctx.globalAlpha = shieldPulse * 0.7;
+            this.ctx.beginPath();
+            this.ctx.arc(
+                this.defender.x + this.defender.width / 2,
+                this.defender.y + this.defender.height / 2,
+                30,
+                0,
+                Math.PI * 2
+            );
+            this.ctx.stroke();
+            this.ctx.globalAlpha = 1;
+            this.ctx.lineWidth = 1;
+        }
+        
+        // Speed boost — yellow afterimages/speed lines
+        if (this.activePowerUps.speedBoost > 0) {
+            this.ctx.strokeStyle = '#ffff00';
+            this.ctx.lineWidth = 2;
+            this.ctx.globalAlpha = 0.4;
+            for (let i = 0; i < 3; i++) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.defender.x - 5 - i * 8, this.defender.y + 15);
+                this.ctx.lineTo(this.defender.x - 15 - i * 8, this.defender.y + 15);
+                this.ctx.moveTo(this.defender.x + this.defender.width + 5 + i * 8, this.defender.y + 15);
+                this.ctx.lineTo(this.defender.x + this.defender.width + 15 + i * 8, this.defender.y + 15);
+                this.ctx.stroke();
+            }
+            this.ctx.globalAlpha = 1;
+            this.ctx.lineWidth = 1;
+        }
+        
         // Smoke particles
         for (const p of this.defenderSmokeParticles) {
             const alpha = p.life / 60;
@@ -1223,12 +1529,33 @@ class Game {
             5
         );
         this.ctx.fill();
+        
+        // Rapid fire — green glow on gun barrel
+        if (this.activePowerUps.rapidFire > 0) {
+            this.ctx.shadowBlur = 10;
+            this.ctx.shadowColor = '#00ff00';
+            this.ctx.fillStyle = '#00ff00';
+        }
         this.ctx.fillRect(
             this.defender.x + this.defender.width/2 - 2,
             this.defender.y - 8,
             4,
             12
         );
+        this.ctx.shadowBlur = 0;
+        
+        // Spread shot — orange fan lines on barrel
+        if (this.activePowerUps.spreadShot > 0) {
+            this.ctx.strokeStyle = '#ff8800';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.defender.x + this.defender.width/2, this.defender.y - 8);
+            this.ctx.lineTo(this.defender.x + this.defender.width/2 - 10, this.defender.y - 15);
+            this.ctx.moveTo(this.defender.x + this.defender.width/2, this.defender.y - 8);
+            this.ctx.lineTo(this.defender.x + this.defender.width/2 + 10, this.defender.y - 15);
+            this.ctx.stroke();
+            this.ctx.lineWidth = 1;
+        }
 
         // Draw defender HP bar above ship
         const barWidth = 60;
@@ -1246,6 +1573,37 @@ class Game {
         
         this.ctx.fillStyle = hpColor;
         this.ctx.fillRect(barX + 1, barY + 1, (barWidth - 2) * hpPercent, barHeight - 2);
+
+        // Draw power-ups
+        for (const powerUp of this.powerUps) {
+            const pulse = Math.sin(powerUp.pulse) * 0.3 + 1;
+            
+            // Glow effect
+            this.ctx.shadowBlur = 15 * pulse;
+            this.ctx.shadowColor = powerUp.color;
+            
+            // Draw box
+            this.ctx.fillStyle = powerUp.color;
+            this.ctx.globalAlpha = 0.8;
+            this.ctx.fillRect(
+                powerUp.x - powerUp.width/2,
+                powerUp.y - powerUp.height/2,
+                powerUp.width,
+                powerUp.height
+            );
+            this.ctx.globalAlpha = 1;
+            
+            // Draw symbol
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 16px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(powerUp.symbol, powerUp.x, powerUp.y);
+            
+            this.ctx.shadowBlur = 0;
+        }
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'alphabetic';
 
         // Draw bullets
         for (const bullet of this.bullets) {
@@ -1268,11 +1626,79 @@ class Game {
 
         // Draw alien projectiles
         for (const proj of this.alienProjectiles) {
-            this.ctx.shadowBlur = 10;
-            this.ctx.shadowColor = proj.color;
-            this.ctx.fillStyle = proj.color;
-            this.ctx.fillRect(proj.x - proj.width/2, proj.y, proj.width, proj.height);
-            this.ctx.shadowBlur = 0;
+            if (proj.type === 'cannon') {
+                // Heavy Cannon — large glowing orb with trail
+                if (proj.trail) {
+                    for (let i = 0; i < proj.trail.length; i++) {
+                        const t = proj.trail[i];
+                        const alpha = (i + 1) / proj.trail.length * 0.6;
+                        this.ctx.globalAlpha = alpha;
+                        this.ctx.fillStyle = '#ff6600';
+                        this.ctx.beginPath();
+                        this.ctx.arc(t.x, t.y, 6, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                    this.ctx.globalAlpha = 1;
+                }
+                
+                // Main orb
+                const gradient = this.ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, 8);
+                gradient.addColorStop(0, '#ffff00');
+                gradient.addColorStop(0.5, '#ff4400');
+                gradient.addColorStop(1, '#ff0000');
+                this.ctx.shadowBlur = 15;
+                this.ctx.shadowColor = '#ff4400';
+                this.ctx.fillStyle = gradient;
+                this.ctx.beginPath();
+                this.ctx.arc(proj.x, proj.y, 8, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+            } else if (proj.type === 'burst') {
+                // Burst Fire — blue/white streaks
+                this.ctx.shadowBlur = 8;
+                this.ctx.shadowColor = '#00aaff';
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillRect(proj.x - 2, proj.y, 4, 10);
+                this.ctx.fillStyle = '#00aaff';
+                this.ctx.fillRect(proj.x - 1, proj.y + 2, 2, 6);
+                this.ctx.shadowBlur = 0;
+            } else if (proj.type === 'homing') {
+                // Homing Missile — purple with curved trail
+                if (proj.trail) {
+                    this.ctx.strokeStyle = '#cc00ff';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.globalAlpha = 0.5;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(proj.trail[0].x, proj.trail[0].y);
+                    for (let i = 1; i < proj.trail.length; i++) {
+                        this.ctx.lineTo(proj.trail[i].x, proj.trail[i].y);
+                    }
+                    this.ctx.stroke();
+                    this.ctx.globalAlpha = 1;
+                    this.ctx.lineWidth = 1;
+                }
+                
+                // Main missile
+                this.ctx.shadowBlur = 10;
+                this.ctx.shadowColor = '#cc00ff';
+                this.ctx.fillStyle = '#ff00ff';
+                this.ctx.fillRect(proj.x - 4, proj.y, 8, 12);
+                this.ctx.fillStyle = '#cc00ff';
+                this.ctx.beginPath();
+                this.ctx.moveTo(proj.x, proj.y);
+                this.ctx.lineTo(proj.x - 4, proj.y + 4);
+                this.ctx.lineTo(proj.x + 4, proj.y + 4);
+                this.ctx.closePath();
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+            } else {
+                // Default/fallback
+                this.ctx.shadowBlur = 10;
+                this.ctx.shadowColor = proj.color;
+                this.ctx.fillStyle = proj.color;
+                this.ctx.fillRect(proj.x - proj.width/2, proj.y, proj.width, proj.height);
+                this.ctx.shadowBlur = 0;
+            }
         }
 
         // Draw debris
@@ -1395,6 +1821,73 @@ class Game {
             this.canvas.width / 2, bottomBarY - 5);
         this.ctx.textAlign = 'left';
         this.ctx.lineWidth = 1;
+
+        // Draw active buff icons
+        let iconX = 10;
+        const iconY = this.canvas.height - 60;
+        const iconSize = 30;
+        
+        if (this.activePowerUps.shield > 0) {
+            this.ctx.fillStyle = '#0088ff';
+            this.ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 20px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('🛡', iconX + iconSize/2, iconY + iconSize/2);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 10px "Courier New"';
+            this.ctx.fillText(this.activePowerUps.shield, iconX + iconSize/2, iconY + iconSize + 10);
+            iconX += iconSize + 5;
+        }
+        
+        if (this.activePowerUps.speedBoost > 0) {
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            this.ctx.fillStyle = '#000000';
+            this.ctx.font = 'bold 20px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('⚡', iconX + iconSize/2, iconY + iconSize/2);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 10px "Courier New"';
+            const speedSecs = Math.ceil(this.activePowerUps.speedBoost / 60);
+            this.ctx.fillText(speedSecs + 's', iconX + iconSize/2, iconY + iconSize + 10);
+            iconX += iconSize + 5;
+        }
+        
+        if (this.activePowerUps.rapidFire > 0) {
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            this.ctx.fillStyle = '#000000';
+            this.ctx.font = 'bold 16px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('▶▶', iconX + iconSize/2, iconY + iconSize/2);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 10px "Courier New"';
+            const rapidSecs = Math.ceil(this.activePowerUps.rapidFire / 60);
+            this.ctx.fillText(rapidSecs + 's', iconX + iconSize/2, iconY + iconSize + 10);
+            iconX += iconSize + 5;
+        }
+        
+        if (this.activePowerUps.spreadShot > 0) {
+            this.ctx.fillStyle = '#ff8800';
+            this.ctx.fillRect(iconX, iconY, iconSize, iconSize);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 16px Arial';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText('◀▶', iconX + iconSize/2, iconY + iconSize/2);
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 10px "Courier New"';
+            const spreadSecs = Math.ceil(this.activePowerUps.spreadShot / 60);
+            this.ctx.fillText(spreadSecs + 's', iconX + iconSize/2, iconY + iconSize + 10);
+            iconX += iconSize + 5;
+        }
+        
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'alphabetic';
 
         // Wave phase overlays
         if (this.wavePhase === 'prepare') {
