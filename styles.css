@@ -1,12 +1,16 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     margin: 0;
-    padding: 20px;
+    padding: 10px;
     background-color: #000;
     color: #00ff00;
     font-family: 'Courier New', Courier, monospace;
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
     min-height: 100vh;
 }
 
@@ -14,39 +18,40 @@ body {
     display: flex;
     gap: 20px;
     align-items: flex-start;
+    max-width: 1200px;
+    width: 100%;
 }
 
 canvas {
     border: 2px solid #00ff00;
     background-color: #000;
+    max-width: 100%;
+    height: auto;
 }
 
 .controls {
-    padding: 20px;
+    padding: 15px;
     border: 2px solid #00ff00;
     background-color: rgba(0, 255, 0, 0.1);
-}
-
-.instructions {
-    margin-bottom: 20px;
+    min-width: 200px;
+    flex-shrink: 0;
 }
 
 .title-container {
     position: relative;
-    margin-bottom: 40px;
+    margin-bottom: 20px;
     perspective: 1000px;
 }
 
 .title-image {
-    width: 300px;
+    width: 100%;
+    max-width: 300px;
     height: auto;
     display: block;
     transform-style: preserve-3d;
     backface-visibility: hidden;
     user-select: none;
     -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
 }
 
 .title-image.shine {
@@ -68,50 +73,43 @@ canvas {
     }
 }
 
-.instructions ul {
-    list-style-type: none;
-    padding-left: 0;
-}
-
-.instructions li {
-    margin: 5px 0;
-    color: #00ff00;
-}
-
 button {
     background-color: #000;
     color: #00ff00;
     border: 2px solid #00ff00;
-    padding: 10px 30px;
+    padding: 10px 20px;
     font-family: 'Courier New', Courier, monospace;
     cursor: pointer;
     transition: all 0.3s ease;
     font-size: 16px;
-    min-width: 120px;
-    margin-bottom: 20px;
+    min-width: 100px;
+    margin-bottom: 10px;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
-button:hover {
+button:hover, button:active {
     background-color: #00ff00;
     color: #000;
 }
 
 .controls-container {
-    margin-top: 20px;
+    margin-top: 10px;
     padding: 10px;
     border: 1px solid #00ff00;
     background-color: rgba(0, 255, 0, 0.05);
 }
 
 .control {
-    margin: 10px 0;
+    margin: 8px 0;
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
 .control label {
-    min-width: 50px;
+    min-width: 40px;
+    font-size: 14px;
 }
 
 .control input[type="range"] {
@@ -125,16 +123,16 @@ button:hover {
 .control input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 15px;
-    height: 15px;
+    width: 20px;
+    height: 20px;
     background: #00ff00;
     cursor: pointer;
     border-radius: 50%;
 }
 
 .control input[type="range"]::-moz-range-thumb {
-    width: 15px;
-    height: 15px;
+    width: 20px;
+    height: 20px;
     background: #00ff00;
     cursor: pointer;
     border-radius: 50%;
@@ -143,19 +141,63 @@ button:hover {
 
 #bpm-value {
     min-width: 30px;
+    font-size: 14px;
 }
 
-@keyframes explosion {
-    0% {
-        transform: scale(1);
-        opacity: 1;
+/* Mobile touch controls */
+#mobile-controls {
+    display: none;
+    gap: 8px;
+    padding: 10px 0;
+}
+
+#mobile-controls button {
+    flex: 1;
+    padding: 18px 10px;
+    font-size: 22px;
+    margin: 0;
+    font-weight: bold;
+}
+
+/* Mobile layout */
+@media (max-width: 768px) {
+    body {
+        padding: 5px;
+        align-items: flex-start;
     }
-    50% {
-        transform: scale(2);
-        opacity: 0.5;
+
+    .game-container {
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
     }
-    100% {
-        transform: scale(3);
-        opacity: 0;
+
+    canvas {
+        width: 100% !important;
+        height: auto !important;
+    }
+
+    .controls {
+        min-width: unset;
+        padding: 10px;
+    }
+
+    .title-container {
+        margin-bottom: 10px;
+        text-align: center;
+    }
+
+    .title-image {
+        max-width: 200px;
+        margin: 0 auto;
+    }
+
+    #mobile-controls {
+        display: flex !important;
+    }
+
+    button {
+        padding: 12px 15px;
+        font-size: 14px;
     }
 }

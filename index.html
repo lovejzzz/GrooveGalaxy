@@ -2,13 +2,20 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Space Invader Drum Machine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Groove Galaxy</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="game-container">
-        <canvas id="gameCanvas"></canvas>
+        <div class="canvas-wrapper">
+            <canvas id="gameCanvas"></canvas>
+            <div id="mobile-controls">
+                <button id="btn-left">◄</button>
+                <button id="btn-shoot">FIRE</button>
+                <button id="btn-right">►</button>
+            </div>
+        </div>
         <div class="controls">
             <div class="title-container">
                 <img src="Groove-Galaxy.png" alt="Groove Galaxy" class="title-image">

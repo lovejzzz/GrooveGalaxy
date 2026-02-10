@@ -118,57 +118,30 @@ class Game {
         this.bpmValue = document.getElementById('bpm-value');
         
         // Mobile support
-        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         this.touchControls = {
             left: false,
-            right: false,
-            shoot: false
+            right: false
         };
         
         // Setup event listeners (called once in constructor)
         this.setupEventListeners();
-        
-        // Add mobile controls to HTML if on mobile
-        if (this.isMobile) {
-            this.createMobileControls();
-            this.adjustCanvasForMobile();
-        }
+        this.setupMobileControls();
     }
 
-    adjustCanvasForMobile() {
-        const maxWidth = Math.min(window.innerWidth - 40, 800);
-        const scale = maxWidth / 800;
-        this.canvas.style.width = maxWidth + 'px';
-        this.canvas.style.height = (600 * scale) + 'px';
-    }
-
-    createMobileControls() {
-        const controlsHTML = `
-            <div id="mobile-controls" style="
-                display: flex;
-                justify-content: space-around;
-                margin-top: 20px;
-                gap: 10px;
-            ">
-                <button id="btn-left" style="flex: 1; padding: 20px; font-size: 20px;">◄</button>
-                <button id="btn-shoot" style="flex: 1; padding: 20px; font-size: 20px;">FIRE</button>
-                <button id="btn-right" style="flex: 1; padding: 20px; font-size: 20px;">►</button>
-            </div>
-        `;
-        
-        const container = document.querySelector('.game-container');
-        container.insertAdjacentHTML('beforeend', controlsHTML);
-        
-        // Touch event listeners
+    setupMobileControls() {
         const btnLeft = document.getElementById('btn-left');
         const btnRight = document.getElementById('btn-right');
         const btnShoot = document.getElementById('btn-shoot');
         
+        if (!btnLeft) return;
+        
         btnLeft.addEventListener('touchstart', (e) => { e.preventDefault(); this.touchControls.left = true; });
         btnLeft.addEventListener('touchend', (e) => { e.preventDefault(); this.touchControls.left = false; });
+        btnLeft.addEventListener('touchcancel', () => { this.touchControls.left = false; });
         
         btnRight.addEventListener('touchstart', (e) => { e.preventDefault(); this.touchControls.right = true; });
         btnRight.addEventListener('touchend', (e) => { e.preventDefault(); this.touchControls.right = false; });
+        btnRight.addEventListener('touchcancel', () => { this.touchControls.right = false; });
         
         btnShoot.addEventListener('touchstart', (e) => { e.preventDefault(); this.shoot(); });
     }
@@ -412,10 +385,8 @@ class Game {
         if (this.isPaused) return;
 
         // Handle mobile touch controls
-        if (this.isMobile) {
-            if (this.touchControls.left) this.moveDefender(-1);
-            if (this.touchControls.right) this.moveDefender(1);
-        }
+        if (this.touchControls.left) this.moveDefender(-1);
+        if (this.touchControls.right) this.moveDefender(1);
 
         // Update AI
         if (this.aiActive) {
