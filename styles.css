@@ -193,6 +193,23 @@ button:hover, button:active {
     font-size: 14px;
 }
 
+.presets-wrapper {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid #333;
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.presets-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+}
+
+.presets-grid #preset-clear {
+    grid-column: 1 / -1;
+}
+
 /* Mobile touch controls */
 #mobile-controls {
     display: none;
@@ -211,42 +228,122 @@ button:hover, button:active {
 /* Mobile layout */
 @media (max-width: 768px) {
     body {
-        padding: 5px;
+        padding: 0;
         align-items: flex-start;
+        overflow-x: hidden;
     }
 
     .game-container {
         flex-direction: column;
-        gap: 10px;
+        gap: 0;
         align-items: stretch;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+    }
+
+    .canvas-wrapper {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
     }
 
     canvas {
         width: 100% !important;
-        height: auto !important;
-    }
-
-    .controls {
-        min-width: unset;
-        padding: 10px;
-    }
-
-    .title-container {
-        margin-bottom: 10px;
-        text-align: center;
-    }
-
-    .title-image {
-        max-width: 200px;
-        margin: 0 auto;
+        flex: 1;
+        border: none;
+        border-bottom: 2px solid #00ff00;
     }
 
     #mobile-controls {
         display: flex !important;
+        padding: 6px;
+        gap: 6px;
+        background: #000;
+        border-bottom: 1px solid #333;
+    }
+
+    #mobile-controls button {
+        padding: 12px 8px;
+        font-size: 18px;
+    }
+
+    .controls {
+        min-width: unset;
+        padding: 8px;
+        border: none;
+        border-top: 2px solid #00ff00;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        background-color: rgba(0, 255, 0, 0.05);
+    }
+
+    .title-container {
+        display: none;
+    }
+
+    .controls > #controlButton {
+        padding: 8px 16px;
+        font-size: 13px;
+        margin: 0;
+        min-width: 70px;
+    }
+
+    .controls-container {
+        flex: 1;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        border: none;
+        background: none;
+    }
+
+    .control {
+        margin: 0;
+        gap: 4px;
+    }
+
+    .control label {
+        min-width: 28px;
+        font-size: 11px;
+    }
+
+    .control input[type="range"] {
+        width: 80px;
+    }
+
+    #bpm-value {
+        font-size: 11px;
+    }
+
+    .presets-wrapper {
+        margin: 0;
+        padding: 0;
+        border: none;
+        background: none;
+    }
+
+    .presets-grid {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+
+    .presets-grid button {
+        padding: 6px 10px;
+        font-size: 11px;
+        min-width: unset;
+        margin: 0;
     }
 
     button {
-        padding: 12px 15px;
-        font-size: 14px;
+        padding: 8px 12px;
+        font-size: 13px;
     }
 }

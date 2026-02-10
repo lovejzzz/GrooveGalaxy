@@ -302,16 +302,14 @@ class Game {
         };
 
         const presetsContainer = document.createElement('div');
+        presetsContainer.className = 'presets-wrapper';
         presetsContainer.innerHTML = `
-            <div style="margin-top: 15px; padding: 10px; border: 1px solid #333; background-color: rgba(255, 255, 255, 0.03);">
-                <label style="display: block; margin-bottom: 10px; color: #00ff00;">Preset Patterns:</label>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
-                    <button id="preset-rock" style="margin: 0;">Rock</button>
-                    <button id="preset-funk" style="margin: 0;">Funk</button>
-                    <button id="preset-jazz" style="margin: 0;">Jazz</button>
-                    <button id="preset-hiphop" style="margin: 0;">Hip-Hop</button>
-                </div>
-                <button id="preset-clear" style="margin-top: 10px; width: 100%;">Clear</button>
+            <div class="presets-grid">
+                <button id="preset-rock">Rock</button>
+                <button id="preset-funk">Funk</button>
+                <button id="preset-jazz">Jazz</button>
+                <button id="preset-hiphop">Hip-Hop</button>
+                <button id="preset-clear">Clear</button>
             </div>
         `;
         
