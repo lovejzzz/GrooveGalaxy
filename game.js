@@ -72,6 +72,23 @@ class Game {
         this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'cardpick', 'gameover'
         this.phaseTimer = 0;
         
+        // STRATEGY: Alien Budget System
+        this.alienCosts = [3, 2, 1, 2, 4]; // Bass, Snare, Hi-hat, Tom, Cymbal
+        this.alienBudget = 8; // Current available budget
+        this.alienBudgetMax = 8; // Wave 1 starts at 8
+        this.budgetShakeTimer = 0; // For visual feedback
+        
+        // STRATEGY: Combo/Syncopation/Silence tracking
+        this.salvoPopups = []; // Track salvo visual effects
+        
+        // STRATEGY: Pattern Memory (AI Adaptation)
+        this.aiColumnHeatmap = Array(this.gridCols).fill(0); // Track dangerous columns
+        this.aiAdapting = false;
+        this.aiAdaptMessage = 0; // Timer for "AI ADAPTING..." message
+        
+        // STRATEGY: Alien Evolution
+        this.evolvedCells = new Set(); // Stores "row,col" strings for evolved aliens
+        
         // NEW: Boss system
         this.isBossWave = false;
         this.bossDefeatedText = 0; // frames to show "BOSS DEFEATED"
@@ -667,20 +684,45 @@ class Game {
 
     toggleGridCell(row, col) {
         if (this.grid[row][col]) {
-            // Remove from grid
+            // Remove from grid - REFUND BUDGET
             this.grid[row][col] = false;
             this.aliens = this.aliens.filter(alien => 
                 !(alien.row === row && alien.col === col));
+            
+            // Refund the cost
+            const cost = this.alienCosts[row] || 1;
+            this.alienBudget += cost;
+            if (this.alienBudget > this.alienBudgetMax) this.alienBudget = this.alienBudgetMax;
+            
+            // Remove from evolved set if present
+            this.evolvedCells.delete(`${row},${col}`);
         } else {
+            // Check budget before adding
+            const cost = this.alienCosts[row] || 1;
+            if (this.alienBudget < cost) {
+                // Can't afford! Flash budget red
+                this.budgetShakeTimer = 20; // 20 frames shake
+                return;
+            }
+            
             // Add to grid
             this.grid[row][col] = true;
+            
+            // Check if this cell is evolved
+            const isEvolved = this.evolvedCells.has(`${row},${col}`);
+            
             this.aliens.push({
                 row,
                 col,
                 x: col * this.cellWidth + this.cellWidth / 2,
                 y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
-                alive: true
+                alive: true,
+                evolved: isEvolved,
+                damage: isEvolved ? 2 : 0 // +2 damage if evolved
             });
+            
+            // Deduct budget
+            this.alienBudget -= cost;
         }
     }
 
@@ -735,17 +777,25 @@ class Game {
 
     loadPreset(pattern) {
         this.clearGrid();
-        for (let row = 0; row < this.gridRows; row++) {
-            for (let col = 0; col < this.gridCols; col++) {
-                if (pattern[row][col] === 1) {
-                    this.grid[row][col] = true;
-                    this.aliens.push({
-                        row,
-                        col,
-                        x: col * this.cellWidth + this.cellWidth / 2,
-                        y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
-                        alive: true
-                    });
+        // Fill left to right, respecting budget
+        for (let col = 0; col < this.gridCols; col++) {
+            for (let row = 0; row < this.gridRows; row++) {
+                if (pattern[row] && pattern[row][col] === 1) {
+                    const cost = this.alienCosts[row] || 1;
+                    if (this.alienBudget >= cost) {
+                        this.grid[row][col] = true;
+                        const isEvolved = this.evolvedCells.has(`${row},${col}`);
+                        this.aliens.push({
+                            row,
+                            col,
+                            x: col * this.cellWidth + this.cellWidth / 2,
+                            y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                            alive: true,
+                            evolved: isEvolved,
+                            damage: isEvolved ? 2 : 0
+                        });
+                        this.alienBudget -= cost;
+                    }
                 }
             }
         }
@@ -754,6 +804,8 @@ class Game {
     clearGrid() {
         this.grid = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(false));
         this.aliens = [];
+        // Reset budget to max when clearing
+        this.alienBudget = this.alienBudgetMax;
     }
 
     restartGame() {
@@ -772,6 +824,14 @@ class Game {
         this.currentCardChoices = [];
         this.fireZones = [];
         
+        // Reset budget and evolution
+        this.alienBudget = 8;
+        this.alienBudgetMax = 8;
+        this.evolvedCells.clear();
+        this.aiAdapting = false;
+        this.aiAdaptMessage = 0;
+        this.aiColumnHeatmap = Array(this.gridCols).fill(0);
+        
         // Reset defender position
         this.defender.x = this.canvas.width / 2;
         
@@ -782,6 +842,7 @@ class Game {
         this.particles = [];
         this.debris = [];
         this.popups = [];
+        this.salvoPopups = [];
         this.muzzleFlashes = [];
         this.defenderSmokeParticles = [];
         this.powerUps = [];
@@ -825,6 +886,15 @@ class Game {
         
         // Advance to next wave
         this.currentWave++;
+        
+        // Update budget for new wave: Wave 1 = 8, Wave 2 = 10, +2 per wave, cap at 24
+        this.alienBudgetMax = Math.min(24, 8 + (this.currentWave - 1) * 2);
+        this.alienBudget = this.alienBudgetMax;
+        
+        // Reset AI adaptation for new wave
+        this.aiAdapting = false;
+        this.aiColumnHeatmap = Array(this.gridCols).fill(0);
+        
         this.updateAIForWave();
         
         // Check if next wave is boss
@@ -977,6 +1047,7 @@ class Game {
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
                 if (this.grid[row][col]) {
+                    const isEvolved = this.evolvedCells.has(`${row},${col}`);
                     this.aliens.push({
                         row,
                         col,
@@ -984,7 +1055,10 @@ class Game {
                         y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
                         alive: true,
                         hp: this.upgrades.alienArmor ? 2 : 1,
-                        maxHp: this.upgrades.alienArmor ? 2 : 1
+                        maxHp: this.upgrades.alienArmor ? 2 : 1,
+                        evolved: isEvolved,
+                        damage: isEvolved ? 2 : 0,
+                        loopsAlive: 0 // Track how many loops this alien survived
                     });
                 }
             }
@@ -1064,6 +1138,20 @@ class Game {
                 // Spread threat to neighboring zones
                 for (let z = Math.max(0, zone - 1); z <= Math.min(15, zone + 1); z++) {
                     threatMap[z] += urgency * (z === zone ? 1.0 : 0.5);
+                }
+            }
+        }
+        
+        // STRATEGY: AI Adaptation - pre-dodge dangerous columns
+        if (this.aiAdapting) {
+            for (let col = 0; col < this.gridCols; col++) {
+                if (this.aiColumnHeatmap[col] > 0) {
+                    const zone = Math.floor((col * this.cellWidth + this.cellWidth/2) / zoneWidth);
+                    // Add predictive threat to columns with aliens
+                    const predictiveThreat = this.aiColumnHeatmap[col] * 0.3;
+                    for (let z = Math.max(0, zone - 1); z <= Math.min(15, zone + 1); z++) {
+                        threatMap[z] += predictiveThreat * (z === zone ? 1.0 : 0.5);
+                    }
                 }
             }
         }
@@ -1379,10 +1467,46 @@ class Game {
     alienShoot(alien) {
         if (!alien) return;
         
-        // Count aliens on same column
+        // Count aliens on same column (for SALVO bonus)
         const aliensOnStep = this.aliens.filter(a => 
             a && a.col === alien.col && a.alive
         ).length;
+        
+        // STRATEGY: Check for SALVO (3+ in column)
+        const isSalvo = aliensOnStep >= 3;
+        
+        // STRATEGY: Check for SYNCOPATION (off-beat = odd columns)
+        const isSyncopated = alien.col % 2 === 1;
+        
+        // STRATEGY: Check for SILENCE (2+ empty columns before)
+        let hasSilence = false;
+        if (alien.col >= 2) {
+            const col1Empty = !this.aliens.some(a => a && a.col === alien.col - 1 && a.alive);
+            const col2Empty = !this.aliens.some(a => a && a.col === alien.col - 2 && a.alive);
+            hasSilence = col1Empty && col2Empty;
+        }
+        
+        // Calculate damage multipliers
+        let damageMultiplier = 1.0;
+        if (isSalvo) damageMultiplier *= 1.5;
+        if (isSyncopated) damageMultiplier *= 1.3;
+        if (hasSilence) damageMultiplier *= 2.0;
+        
+        // Show visual feedback
+        if (isSalvo) {
+            this.salvoPopups.push({
+                col: alien.col,
+                y: this.gridYOffset,
+                life: 18 // 0.3 seconds at 60fps
+            });
+            this.createPopup(alien.x, alien.y - 30, 'SALVO!', '#ff00ff');
+        }
+        if (isSyncopated) {
+            this.createPopup(alien.x, alien.y - 20, 'SYNC!', '#ffff00');
+        }
+        if (hasSilence) {
+            this.createPopup(alien.x, alien.y - 40, 'SILENCE BREAK!', '#ffd700');
+        }
         
         const colors = this.instrumentColors[alien.row];
         
@@ -1397,6 +1521,10 @@ class Game {
             
             // Boss damage boost
             if (this.isBossWave) baseDamage = Math.floor(baseDamage * 1.5);
+            
+            // STRATEGY: Apply multipliers and evolved bonus
+            baseDamage = Math.floor(baseDamage * damageMultiplier);
+            if (alien.evolved) baseDamage += 2;
             
             this.alienProjectiles.push({
                 type: 'cannon',
@@ -1416,6 +1544,10 @@ class Game {
             let bulletDamage = 3;
             if (aliensOnStep >= 2) bulletDamage = 4;
             if (this.isBossWave) bulletDamage = Math.floor(bulletDamage * 1.5);
+            
+            // STRATEGY: Apply multipliers and evolved bonus
+            bulletDamage = Math.floor(bulletDamage * damageMultiplier);
+            if (alien.evolved) bulletDamage += 2;
             
             for (let i = 0; i < 3; i++) {
                 const spread = (i - 1) * 8; // -8, 0, +8 pixels
@@ -1439,6 +1571,10 @@ class Game {
             if (aliensOnStep === 3) homingDamage = 10;
             if (this.isBossWave) homingDamage = Math.floor(homingDamage * 1.5);
             
+            // STRATEGY: Apply multipliers and evolved bonus
+            homingDamage = Math.floor(homingDamage * damageMultiplier);
+            if (alien.evolved) homingDamage += 2;
+            
             this.alienProjectiles.push({
                 type: 'homing',
                 x: alien.x,
@@ -1457,6 +1593,10 @@ class Game {
             let bulletDamage = 3;
             if (aliensOnStep >= 2) bulletDamage = 4;
             if (this.isBossWave) bulletDamage = Math.floor(bulletDamage * 1.5);
+            
+            // STRATEGY: Apply multipliers and evolved bonus
+            bulletDamage = Math.floor(bulletDamage * damageMultiplier);
+            if (alien.evolved) bulletDamage += 2;
             
             for (let i = 0; i < 3; i++) {
                 const spread = (i - 1) * 8;
@@ -1949,7 +2089,31 @@ class Game {
             // Check if loop completed
             if (this.currentStep === 0) {
                 this.currentLoop++;
+                
+                // STRATEGY: AI Adaptation after loop 3
+                if (this.currentLoop === 4 && !this.aiAdapting) {
+                    this.aiAdapting = true;
+                    this.aiAdaptMessage = 120; // 2 seconds
+                    // Build heatmap of dangerous columns
+                    for (const alien of this.aliens) {
+                        if (alien && alien.alive) {
+                            this.aiColumnHeatmap[alien.col] += 1;
+                        }
+                    }
+                }
+                if (this.currentLoop === 6) {
+                    // Increase dodge accuracy further
+                    this.aiAccuracy = Math.min(0.95, this.aiAccuracy + 0.1);
+                }
+                
                 if (this.currentLoop > this.loopsPerWave) {
+                    // STRATEGY: Mark surviving aliens for evolution
+                    for (const alien of this.aliens) {
+                        if (alien && alien.alive) {
+                            this.evolvedCells.add(`${alien.row},${alien.col}`);
+                        }
+                    }
+                    
                     // Wave completed
                     if (this.defenderHP > 0) {
                         // Player loses - defender survived
@@ -2186,6 +2350,18 @@ class Game {
             for (let col = 0; col < this.gridCols; col++) {
                 const flashIntensity = this.beatFlash[row] && this.beatFlash[row][col] ? this.beatFlash[row][col] : 0;
                 
+                // STRATEGY: Off-beat column visual (syncopation)
+                const isOffBeat = col % 2 === 1;
+                if (isOffBeat) {
+                    this.ctx.fillStyle = 'rgba(255, 255, 100, 0.05)';
+                    this.ctx.fillRect(
+                        col * this.cellWidth,
+                        row * this.cellHeight + this.gridYOffset,
+                        this.cellWidth,
+                        this.cellHeight
+                    );
+                }
+                
                 if (flashIntensity > 0) {
                     const colors = this.instrumentColors[row];
                     const gradient = this.ctx.createRadialGradient(
@@ -2208,13 +2384,28 @@ class Game {
                     );
                 }
                 
-                this.ctx.strokeStyle = col % 4 === 0 ? '#444444' : '#333333';
+                // STRATEGY: Evolved cell indicator
+                if (this.evolvedCells.has(`${row},${col}`)) {
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                    this.ctx.fillRect(
+                        col * this.cellWidth + 2,
+                        row * this.cellHeight + this.gridYOffset + 2,
+                        this.cellWidth - 4,
+                        this.cellHeight - 4
+                    );
+                }
+                
+                this.ctx.strokeStyle = col % 4 === 0 ? '#444444' : (isOffBeat ? '#555533' : '#333333');
+                if (isOffBeat) {
+                    this.ctx.setLineDash([2, 2]);
+                }
                 this.ctx.strokeRect(
                     col * this.cellWidth,
                     row * this.cellHeight + this.gridYOffset,
                     this.cellWidth,
                     this.cellHeight
                 );
+                this.ctx.setLineDash([]);
             }
         }
 
@@ -2231,12 +2422,62 @@ class Game {
             );
             this.ctx.lineWidth = 1;
         }
+        
+        // STRATEGY: Draw salvo beams
+        for (let i = this.salvoPopups.length - 1; i >= 0; i--) {
+            const salvo = this.salvoPopups[i];
+            if (!salvo) {
+                this.salvoPopups.splice(i, 1);
+                continue;
+            }
+            const alpha = salvo.life / 18;
+            this.ctx.globalAlpha = alpha * 0.8;
+            const gradient = this.ctx.createLinearGradient(
+                salvo.col * this.cellWidth + this.cellWidth / 2,
+                salvo.y,
+                salvo.col * this.cellWidth + this.cellWidth / 2,
+                salvo.y + this.gridRows * this.cellHeight
+            );
+            gradient.addColorStop(0, '#ff00ff');
+            gradient.addColorStop(0.5, '#ffaaff');
+            gradient.addColorStop(1, '#ff00ff');
+            this.ctx.strokeStyle = gradient;
+            this.ctx.lineWidth = 8;
+            this.ctx.shadowBlur = 15;
+            this.ctx.shadowColor = '#ff00ff';
+            this.ctx.beginPath();
+            this.ctx.moveTo(salvo.col * this.cellWidth + this.cellWidth / 2, salvo.y);
+            this.ctx.lineTo(salvo.col * this.cellWidth + this.cellWidth / 2, salvo.y + this.gridRows * this.cellHeight);
+            this.ctx.stroke();
+            this.ctx.shadowBlur = 0;
+            this.ctx.globalAlpha = 1;
+            this.ctx.lineWidth = 1;
+            
+            salvo.life--;
+            if (salvo.life <= 0) {
+                this.salvoPopups.splice(i, 1);
+            }
+        }
 
         // Draw aliens
         for (const alien of this.aliens) {
             if (!alien || !alien.alive) continue;
             
             const colors = this.instrumentColors[alien.row];
+            
+            // STRATEGY: Evolved alien glow
+            if (alien.evolved) {
+                const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+                this.ctx.globalAlpha = 0.4 * pulse;
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.shadowBlur = 15;
+                this.ctx.shadowColor = '#ffffff';
+                this.ctx.beginPath();
+                this.ctx.arc(alien.x, alien.y, 25, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+                this.ctx.globalAlpha = 1;
+            }
             
             // Boss transformation
             let alienScale = 1;
@@ -2258,6 +2499,11 @@ class Game {
                 this.ctx.fill();
                 this.ctx.shadowBlur = 0;
                 this.ctx.globalAlpha = 1;
+            }
+            
+            // STRATEGY: Evolved aliens are slightly larger
+            if (alien.evolved) {
+                alienScale *= 1.2;
             }
             
             // Hit flash effect - flash white when hit
@@ -2333,6 +2579,20 @@ class Game {
             
             this.ctx.restore();
             this.ctx.lineWidth = 1;
+            
+            // STRATEGY: Evolved star indicator
+            if (alien.evolved) {
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.font = 'bold 16px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.shadowBlur = 5;
+                this.ctx.shadowColor = '#ffffff';
+                this.ctx.fillText('★', alien.x + 20, alien.y - 20);
+                this.ctx.shadowBlur = 0;
+                this.ctx.textAlign = 'left';
+                this.ctx.textBaseline = 'alphabetic';
+            }
             
             // Boss name tag
             if (this.isBossWave) {
@@ -2743,6 +3003,37 @@ class Game {
 
         // Draw UI elements (not affected by shake)
         
+        // STRATEGY: Budget display (above grid, centered)
+        const budgetPercent = this.alienBudgetMax > 0 ? this.alienBudget / this.alienBudgetMax : 0;
+        let budgetColor = '#00ff00';
+        if (budgetPercent <= 0.25) budgetColor = '#ff0000';
+        else if (budgetPercent <= 0.5) budgetColor = '#ffff00';
+        
+        this.ctx.save();
+        if (this.budgetShakeTimer > 0) {
+            // Shake effect when can't afford
+            this.ctx.translate((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 4);
+            this.budgetShakeTimer--;
+            budgetColor = '#ff0000';
+        }
+        this.ctx.fillStyle = budgetColor;
+        this.ctx.font = 'bold 24px "Courier New"';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`BUDGET: ${this.alienBudget}/${this.alienBudgetMax}`, this.canvas.width / 2, this.gridYOffset - 15);
+        this.ctx.restore();
+        
+        // STRATEGY: Row cost labels (left of grid)
+        const rowNames = ['🔴 BASS', '🔵 SNARE', '🟣 HI-HAT', '🟢 TOM', '🟡 CYMBAL'];
+        for (let row = 0; row < this.gridRows; row++) {
+            const cost = this.alienCosts[row] || 1;
+            const rowY = row * this.cellHeight + this.gridYOffset + this.cellHeight / 2 + 5;
+            this.ctx.fillStyle = '#888888';
+            this.ctx.font = '10px "Courier New"';
+            this.ctx.textAlign = 'right';
+            this.ctx.fillText(`${rowNames[row]} (${cost})`, this.canvas.width / this.gridCols - 5, rowY);
+        }
+        this.ctx.textAlign = 'left';
+        
         // Score
         this.ctx.fillStyle = '#00ff00';
         this.ctx.font = 'bold 20px "Courier New"';
@@ -2890,6 +3181,22 @@ class Game {
             this.ctx.fillText(this.toast.message, this.canvas.width / 2, 105);
             this.ctx.globalAlpha = 1;
             this.ctx.textAlign = 'left';
+        }
+        
+        // STRATEGY: AI Adaptation message
+        if (this.aiAdaptMessage > 0) {
+            const alpha = Math.min(1, this.aiAdaptMessage / 30);
+            this.ctx.globalAlpha = alpha;
+            this.ctx.fillStyle = '#ff8800';
+            this.ctx.font = 'bold 20px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.shadowBlur = 10;
+            this.ctx.shadowColor = '#ff8800';
+            this.ctx.fillText('AI ADAPTING...', this.canvas.width - 150, this.canvas.height - 200);
+            this.ctx.shadowBlur = 0;
+            this.ctx.globalAlpha = 1;
+            this.ctx.textAlign = 'left';
+            this.aiAdaptMessage--;
         }
 
         // Tutorial overlay
