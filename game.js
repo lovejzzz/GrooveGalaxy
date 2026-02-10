@@ -323,30 +323,22 @@ class Game {
                 [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0]
             ]
         };
-
-        const presetsContainer = document.createElement('div');
-        presetsContainer.className = 'presets-wrapper';
-        presetsContainer.innerHTML = `
-            <div class="presets-grid">
-                <button id="preset-rock">Rock</button>
-                <button id="preset-funk">Funk</button>
-                <button id="preset-jazz">Jazz</button>
-                <button id="preset-hiphop">Hip-Hop</button>
-                <button id="preset-clear">Clear</button>
-            </div>
-        `;
-        
-        document.querySelector('.controls-container').appendChild(presetsContainer);
         
         Object.keys(presets).forEach(preset => {
-            document.getElementById(`preset-${preset}`).addEventListener('click', () => {
-                this.loadPreset(presets[preset]);
-            });
+            const btn = document.getElementById(`preset-${preset}`);
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    this.loadPreset(presets[preset]);
+                });
+            }
         });
         
-        document.getElementById('preset-clear').addEventListener('click', () => {
-            this.clearGrid();
-        });
+        const clearBtn = document.getElementById('preset-clear');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearGrid();
+            });
+        }
     }
 
     loadPreset(pattern) {
