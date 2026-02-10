@@ -466,57 +466,93 @@ class Game {
     updateAI() {
         if (!this.aiActive || this.isPaused || this.wavePhase !== 'playing') return;
 
-        // Priority 1: Dodge incoming projectiles
-        let nearestProjectile = null;
-        let minProjDistance = Infinity;
+        const defenderCenter = this.defender.x + this.defender.width / 2;
+        const canvasCenter = this.canvas.width / 2;
+        const atLeftWall = this.defender.x <= 5;
+        const atRightWall = this.defender.x >= this.canvas.width - this.defender.width - 5;
+        
+        // Scan ALL incoming threats and find safest position
+        let threatMap = new Array(16).fill(0); // divide screen into 16 zones
+        const zoneWidth = this.canvas.width / 16;
         
         for (const proj of this.alienProjectiles) {
-            const distance = Math.abs(proj.x - (this.defender.x + this.defender.width / 2));
             const timeToImpact = (this.defender.y - proj.y) / proj.speed;
-            
-            if (timeToImpact > 0 && timeToImpact < 60 && distance < minProjDistance) {
-                minProjDistance = distance;
-                nearestProjectile = proj;
+            if (timeToImpact > 0 && timeToImpact < 50) {
+                const zone = Math.floor(proj.x / zoneWidth);
+                const urgency = 1 / (timeToImpact + 1); // closer = more dangerous
+                // Spread threat to neighboring zones
+                for (let z = Math.max(0, zone - 1); z <= Math.min(15, zone + 1); z++) {
+                    threatMap[z] += urgency * (z === zone ? 1.0 : 0.5);
+                }
             }
         }
-
-        if (nearestProjectile && minProjDistance < 100) {
-            // Dodge left or right
-            const defenderCenter = this.defender.x + this.defender.width / 2;
-            const dodgeDirection = nearestProjectile.x > defenderCenter ? -1 : 1;
-            this.moveDefender(dodgeDirection);
+        
+        const currentZone = Math.floor(defenderCenter / zoneWidth);
+        const currentThreat = threatMap[currentZone] || 0;
+        
+        // Find movement direction
+        let moveDir = 0;
+        
+        if (currentThreat > 0.3) {
+            // Under fire — find safest nearby zone
+            let bestZone = currentZone;
+            let bestScore = Infinity;
+            
+            for (let z = Math.max(0, currentZone - 4); z <= Math.min(15, currentZone + 4); z++) {
+                // Score = threat + distance penalty + wall penalty
+                let score = threatMap[z] * 3;
+                score += Math.abs(z - currentZone) * 0.1; // prefer nearby
+                
+                // Penalize corners heavily
+                if (z <= 1 || z >= 14) score += 0.5;
+                
+                // Slight preference for center
+                score += Math.abs(z - 8) * 0.02;
+                
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestZone = z;
+                }
+            }
+            
+            if (bestZone < currentZone) moveDir = -1;
+            else if (bestZone > currentZone) moveDir = 1;
+            else if (atLeftWall) moveDir = 1;  // Unstick from walls
+            else if (atRightWall) moveDir = -1;
         } else {
-            // Priority 2: Find and shoot nearest alien
+            // No immediate threat — hunt aliens but prefer center
             let nearestAlien = null;
             let minDistance = Infinity;
 
             for (const alien of this.aliens) {
                 if (!alien.alive) continue;
-                const distance = Math.abs(alien.x - (this.defender.x + this.defender.width / 2));
+                const distance = Math.abs(alien.x - defenderCenter);
                 if (distance < minDistance) {
                     minDistance = distance;
                     nearestAlien = alien;
                 }
             }
 
-            if (nearestAlien) {
-                const defenderCenter = this.defender.x + this.defender.width / 2;
-                const direction = nearestAlien.x > defenderCenter ? 1 : -1;
-                
-                if (Math.abs(nearestAlien.x - defenderCenter) > 10) {
-                    this.moveDefender(direction);
-                }
-
-                const currentTime = Date.now();
-                if (currentTime - this.lastShotTime >= this.shotDelay) {
-                    if (Math.random() < this.aiAccuracy) {
-                        for (let i = 0; i < this.aiShotsPerTurn; i++) {
-                            this.shoot();
-                        }
-                    }
-                    this.lastShotTime = currentTime;
+            if (nearestAlien && minDistance > 10) {
+                moveDir = nearestAlien.x > defenderCenter ? 1 : -1;
+            } else if (Math.abs(defenderCenter - canvasCenter) > 100) {
+                // Drift back toward center when idle
+                moveDir = canvasCenter > defenderCenter ? 1 : -1;
+            }
+        }
+        
+        if (moveDir !== 0) this.moveDefender(moveDir);
+        
+        // Shooting logic (independent of movement)
+        const currentTime = Date.now();
+        if (currentTime - this.lastShotTime >= this.shotDelay) {
+            const aliveAliens = this.aliens.filter(a => a.alive);
+            if (aliveAliens.length > 0 && Math.random() < this.aiAccuracy) {
+                for (let i = 0; i < this.aiShotsPerTurn; i++) {
+                    this.shoot();
                 }
             }
+            this.lastShotTime = currentTime;
         }
     }
 
