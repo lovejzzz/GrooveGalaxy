@@ -743,8 +743,7 @@ class Game {
                     alien.alive = false;
                     this.createDebris(alien.x, alien.y, alien.row);
                     this.createExplosion(alien.x, alien.y, false);
-                    this.freezeFrame(2);
-                    this.addShake(6);
+                    this.addShake(4);
                     this.bullets.splice(i, 1);
                     hitAlien = true;
                     break;
@@ -787,8 +786,8 @@ class Game {
                 
                 // Visual feedback
                 this.defenderDamageFlash = 1.0;
-                this.addShake(10 + proj.aliensOnStep * 5);
-                this.freezeFrame(3);
+                this.addShake(8 + proj.aliensOnStep * 3);
+                this.freezeFrame(2);
                 
                 // Check if defender is low HP
                 if (this.defenderHP <= this.defenderMaxHP * 0.25 && !this.defenderLowHP) {
