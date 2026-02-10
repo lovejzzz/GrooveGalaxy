@@ -16,6 +16,10 @@ class DrumMachine {
                     fetch(`DrumAudio/${file}`)
                         .then(response => response.arrayBuffer())
                         .then(buffer => this.audioContext.decodeAudioData(buffer))
+                        .catch(err => {
+                            console.warn(`Failed to load ${file}:`, err);
+                            return null;
+                        })
                 )
             );
 
@@ -27,9 +31,11 @@ class DrumMachine {
 
     playSound(index) {
         if (!this.isInitialized) return;
+        const buffer = this.sounds[this.soundOrder[index]];
+        if (!buffer) return;
         
         const source = this.audioContext.createBufferSource();
-        source.buffer = this.sounds[this.soundOrder[index]];
+        source.buffer = buffer;
         source.connect(this.audioContext.destination);
         source.start();
     }
@@ -59,20 +65,6 @@ class Game {
             };
         }
         
-        // Score system
-        this.score = 0;
-        this.combo = 0;
-        this.maxCombo = 0;
-        this.onBeatBonus = 100;
-        this.normalHitScore = 10;
-        
-        // Visual beat feedback
-        this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
-        this.stepPulse = 0;
-        
-        // Particles for sound visualization
-        this.particles = [];
-        
         // AI settings
         this.lastShotTime = 0;
         this.shotDelay = 300;
@@ -92,6 +84,20 @@ class Game {
         this.cellWidth = this.canvas.width / this.gridCols;
         this.cellHeight = 40;
         this.gridYOffset = 100;
+        
+        // Score system
+        this.score = 0;
+        this.combo = 0;
+        this.maxCombo = 0;
+        this.onBeatBonus = 100;
+        this.normalHitScore = 10;
+        
+        // Visual beat feedback
+        this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
+        this.stepPulse = 0;
+        
+        // Particles for sound visualization
+        this.particles = [];
         
         this.grid = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(false));
         this.aliens = [];
@@ -182,7 +188,11 @@ class Game {
         // Initialize control button
         this.controlButton.onclick = async () => {
             if (!this.isStarted) {
-                await this.drumMachine.init();
+                try {
+                    await this.drumMachine.init();
+                } catch (e) {
+                    console.warn('Audio init failed (CORS?), continuing without sound:', e);
+                }
                 this.isStarted = true;
                 this.animate();
                 this.controlButton.textContent = 'Pause';
@@ -678,12 +688,14 @@ class Game {
 
         // Draw particles
         for (const p of this.particles) {
-            const alpha = p.life / 40;
-            this.ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
+            const alpha = Math.max(0, p.life / 40);
+            this.ctx.globalAlpha = alpha;
+            this.ctx.fillStyle = p.color;
             this.ctx.beginPath();
             this.ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
             this.ctx.fill();
         }
+        this.ctx.globalAlpha = 1;
 
         // Draw explosions
         for (let i = this.explosions.length - 1; i >= 0; i--) {
