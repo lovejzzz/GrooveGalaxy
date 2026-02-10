@@ -3359,6 +3359,7 @@ class Game {
                 
                 // Card background
                 this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.beginPath();
                 this.ctx.roundRect(0, 0, cardWidth, cardHeight, 10);
                 this.ctx.fill();
                 
@@ -3369,6 +3370,7 @@ class Game {
                     this.ctx.shadowBlur = glow;
                     this.ctx.shadowColor = card.color;
                 }
+                this.ctx.beginPath();
                 this.ctx.roundRect(0, 0, cardWidth, cardHeight, 10);
                 this.ctx.stroke();
                 this.ctx.shadowBlur = 0;
