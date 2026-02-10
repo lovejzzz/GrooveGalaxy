@@ -631,10 +631,17 @@ class Game {
         // Mark as picked
         this.upgrades[card.id] = true;
         
-        // Transition to next wave
+        // Advance to next wave
+        this.currentWave++;
+        this.updateAIForWave();
+        
+        // Transition to prepare phase
         this.wavePhase = 'prepare';
         this.phaseTimer = 0;
         this.currentCardChoices = [];
+        
+        // Respawn aliens for new wave
+        this.respawnAliens();
     }
 
     applyUpgrade(card) {
@@ -1195,6 +1202,26 @@ class Game {
                 aliensOnStep,
                 trail: []
             });
+        } else if (alien.row === 3) {
+            // 4th row (Cyan/Extra Row) — same as snare burst
+            let bulletDamage = 3;
+            if (aliensOnStep >= 2) bulletDamage = 4;
+            
+            for (let i = 0; i < 3; i++) {
+                const spread = (i - 1) * 8;
+                this.alienProjectiles.push({
+                    type: 'burst',
+                    x: alien.x + spread,
+                    y: alien.y - (i * 6),
+                    width: 6,
+                    height: 10,
+                    speed: (4 + (i * 0.5)) * speedMultiplier,
+                    damage: bulletDamage,
+                    color: colors.primary,
+                    row: alien.row,
+                    aliensOnStep
+                });
+            }
         }
         
         // Muzzle flash
@@ -1931,6 +1958,18 @@ class Game {
                         this.ctx.fill();
                         this.ctx.stroke();
                         break;
+                        
+                    case 3: // Cyan (Extra Row)
+                        // Draw a diamond shape
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(alien.x, alien.y - 12);
+                        this.ctx.lineTo(alien.x + 12, alien.y);
+                        this.ctx.lineTo(alien.x, alien.y + 12);
+                        this.ctx.lineTo(alien.x - 12, alien.y);
+                        this.ctx.closePath();
+                        this.ctx.fill();
+                        this.ctx.stroke();
+                        break;
                 }
                 this.ctx.lineWidth = 1;
                 
@@ -2431,6 +2470,101 @@ class Game {
             this.ctx.font = '16px "Courier New"';
             this.ctx.fillText('Edit your pattern now!', this.canvas.width / 2, this.canvas.height / 2 + 60);
             this.ctx.textAlign = 'left';
+        } else if (this.wavePhase === 'cardpick') {
+            // Card selection overlay
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // Title
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.font = 'bold 36px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('CHOOSE AN UPGRADE', this.canvas.width / 2, 80);
+            
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = '20px "Courier New"';
+            this.ctx.fillText(`Wave ${this.currentWave} Complete`, this.canvas.width / 2, 115);
+            
+            // Draw 3 cards
+            const cardWidth = 180;
+            const cardHeight = 250;
+            const gap = 20;
+            const totalWidth = (cardWidth * 3) + (gap * 2);
+            const startX = (this.canvas.width - totalWidth) / 2;
+            const startY = this.canvas.height / 2 - cardHeight / 2;
+            
+            for (let i = 0; i < 3; i++) {
+                const card = this.currentCardChoices[i];
+                if (!card) continue;
+                
+                const cardX = startX + (i * (cardWidth + gap));
+                const isHovered = i === this.hoveredCardIndex;
+                const scale = isHovered ? 1.05 : 1.0;
+                const glow = isHovered ? 15 : 0;
+                
+                this.ctx.save();
+                this.ctx.translate(cardX + cardWidth/2, startY + cardHeight/2);
+                this.ctx.scale(scale, scale);
+                this.ctx.translate(-cardWidth/2, -cardHeight/2);
+                
+                // Card background
+                this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.roundRect(0, 0, cardWidth, cardHeight, 10);
+                this.ctx.fill();
+                
+                // Border based on rarity
+                this.ctx.strokeStyle = card.color;
+                this.ctx.lineWidth = isHovered ? 4 : 3;
+                if (glow > 0) {
+                    this.ctx.shadowBlur = glow;
+                    this.ctx.shadowColor = card.color;
+                }
+                this.ctx.roundRect(0, 0, cardWidth, cardHeight, 10);
+                this.ctx.stroke();
+                this.ctx.shadowBlur = 0;
+                this.ctx.lineWidth = 1;
+                
+                // Icon/emoji at top
+                this.ctx.font = '60px Arial';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText(card.icon, cardWidth/2, 70);
+                
+                // Card name
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.font = 'bold 18px "Courier New"';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText(card.name, cardWidth/2, 140);
+                
+                // Description
+                this.ctx.fillStyle = '#aaaaaa';
+                this.ctx.font = '14px "Courier New"';
+                const words = card.desc.split(' ');
+                let line = '';
+                let y = 180;
+                for (let w = 0; w < words.length; w++) {
+                    const testLine = line + words[w] + ' ';
+                    const metrics = this.ctx.measureText(testLine);
+                    if (metrics.width > cardWidth - 20 && w > 0) {
+                        this.ctx.fillText(line, cardWidth/2, y);
+                        line = words[w] + ' ';
+                        y += 18;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                this.ctx.fillText(line, cardWidth/2, y);
+                
+                // Rarity label at bottom
+                this.ctx.fillStyle = card.color;
+                this.ctx.font = 'bold 12px "Courier New"';
+                this.ctx.fillText(card.rarity.toUpperCase(), cardWidth/2, cardHeight - 20);
+                
+                this.ctx.restore();
+            }
+            
+            this.ctx.textAlign = 'left';
+            this.ctx.textBaseline = 'alphabetic';
         } else if (this.wavePhase === 'complete') {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
