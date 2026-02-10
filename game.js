@@ -65,11 +65,26 @@ class Game {
             };
         }
         
-        // AI settings
+        // NEW: Wave system
+        this.currentWave = 1;
+        this.currentLoop = 1;
+        this.loopsPerWave = 4;
+        this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'gameover'
+        this.phaseTimer = 0;
+        
+        // NEW: Defender HP system
+        this.defenderMaxHP = 100;
+        this.defenderHP = 100;
+        this.defenderDamageFlash = 0;
+        this.defenderLowHP = false;
+        this.defenderSmokeParticles = [];
+        
+        // AI settings - now scales with waves
         this.lastShotTime = 0;
         this.shotDelay = 900;
-        this.aiAccuracy = 0.6;
-        this.aiActive = false;
+        this.aiAccuracy = 0.5;
+        this.aiActive = true; // Always active in new mode
+        this.aiShotsPerTurn = 1; // Increases at higher waves
         
         this.defender = {
             x: this.canvas.width / 2,
@@ -85,55 +100,59 @@ class Game {
         this.cellHeight = 40;
         this.gridYOffset = 100;
         
-        // Score system
+        // Score system - now based on damage
         this.score = 0;
-        this.combo = 0;
-        this.maxCombo = 0;
-        this.onBeatBonus = 100;
-        this.normalHitScore = 10;
         
         // Visual beat feedback
         this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
         this.stepPulse = 0;
         
-        // NEW: Instrument colors
+        // Instrument colors
         this.instrumentColors = [
-            { primary: '#ff4400', secondary: '#ff6600', name: 'Bass' },      // Red/orange
-            { primary: '#00aaff', secondary: '#ffffff', name: 'Snare' },     // Blue/white
-            { primary: '#cc00ff', secondary: '#ff00cc', name: 'Hi-hat' }     // Purple/magenta
+            { primary: '#ff4400', secondary: '#ff6600', name: 'Bass' },
+            { primary: '#00aaff', secondary: '#ffffff', name: 'Snare' },
+            { primary: '#cc00ff', secondary: '#ff00cc', name: 'Hi-hat' }
         ];
         
-        // NEW: Screen shake system
+        // Screen shake system
         this.shake = { x: 0, y: 0, intensity: 0, decay: 0.85 };
         
-        // NEW: Freeze frame system
+        // Freeze frame system
         this.freezeFrames = 0;
         
-        // NEW: Debris system
+        // Debris system
         this.debris = [];
         this.maxDebris = 100;
         
-        // NEW: Starfield
+        // Starfield
         this.stars = [];
         this.initStarfield();
         
-        // NEW: Intensity tracking for chaos
+        // Intensity tracking for chaos
         this.intensity = 0;
         
-        // NEW: Kill text popups
+        // Kill text popups
         this.popups = [];
         
         // Particles for sound visualization
         this.particles = [];
         
+        // Grid represents the master pattern (what player designed)
         this.grid = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(false));
+        
+        // NEW: Aliens have alive state that resets each loop
         this.aliens = [];
+        this.alienProjectiles = []; // NEW: Projectiles fired by aliens
+        
         this.bullets = [];
         this.explosions = [];
         this.currentStep = 0;
         this.lastStepTime = 0;
         this.bpm = 120;
         this.stepInterval = (60 / this.bpm) * 1000 / 4;
+        
+        // NEW: Muzzle flashes when aliens shoot
+        this.muzzleFlashes = [];
         
         this.gameOver = false;
         this.isPaused = false;
@@ -155,7 +174,6 @@ class Game {
         this.setupMobileControls();
     }
 
-    // NEW: Initialize starfield
     initStarfield() {
         for (let i = 0; i < 100; i++) {
             this.stars.push({
@@ -184,7 +202,7 @@ class Game {
         btnRight.addEventListener('touchend', (e) => { e.preventDefault(); this.touchControls.right = false; });
         btnRight.addEventListener('touchcancel', () => { this.touchControls.right = false; });
         
-        btnShoot.addEventListener('touchstart', (e) => { e.preventDefault(); this.shoot(); });
+        btnShoot.addEventListener('touchstart', (e) => { e.preventDefault(); /* AI shoots automatically */ });
     }
 
     setupEventListeners() {
@@ -212,29 +230,32 @@ class Game {
                 this.controlButton.textContent = 'Pause';
                 
                 const titleImage = document.querySelector('.title-image');
-                titleImage.classList.add('shine');
-                setTimeout(() => {
-                    titleImage.classList.remove('shine');
-                }, 2500);
+                if (titleImage) {
+                    titleImage.classList.add('shine');
+                    setTimeout(() => {
+                        titleImage.classList.remove('shine');
+                    }, 2500);
+                }
             } else {
                 this.togglePause();
             }
         };
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === ' ' && !this.isPaused) {
-                this.shoot();
-            } else if (e.key === 'p' || e.key === 'P') {
+            if (e.key === 'p' || e.key === 'P') {
                 this.togglePause();
-            } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
-                this.moveDefender(-1);
-            } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
-                this.moveDefender(1);
+            } else if (e.key === 'r' || e.key === 'R') {
+                if (this.wavePhase === 'gameover') {
+                    this.restartGame();
+                }
             }
         });
 
         // Canvas click for grid editing
         this.canvas.addEventListener('click', (e) => {
+            // Can only edit during prepare phase or before starting
+            if (this.wavePhase === 'playing' && this.isStarted) return;
+            
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -252,24 +273,7 @@ class Game {
                 col >= 0 && col < this.gridCols &&
                 clickedRow >= 0 && clickedRow < this.gridRows) {
                 
-                if (this.grid[clickedRow][col]) {
-                    this.grid[clickedRow][col] = false;
-                    this.aliens = this.aliens.filter(alien => 
-                        !(alien.row === clickedRow && alien.col === col));
-                } else {
-                    this.grid[clickedRow][col] = true;
-                    this.aliens.push({
-                        row: clickedRow,
-                        col,
-                        x: col * this.cellWidth + this.cellWidth / 2,
-                        y: clickedRow * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
-                        alive: true
-                    });
-                    
-                    if (!this.aiActive && this.isStarted) {
-                        this.aiActive = true;
-                    }
-                }
+                this.toggleGridCell(clickedRow, col);
             }
         });
 
@@ -277,27 +281,46 @@ class Game {
         this.setupPresetButtons();
     }
 
+    toggleGridCell(row, col) {
+        if (this.grid[row][col]) {
+            // Remove from grid
+            this.grid[row][col] = false;
+            this.aliens = this.aliens.filter(alien => 
+                !(alien.row === row && alien.col === col));
+        } else {
+            // Add to grid
+            this.grid[row][col] = true;
+            this.aliens.push({
+                row,
+                col,
+                x: col * this.cellWidth + this.cellWidth / 2,
+                y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                alive: true
+            });
+        }
+    }
+
     setupPresetButtons() {
         const presets = {
             rock: [
-                [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],  // Bass
-                [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],  // Snare
-                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]   // Hi-hat
+                [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+                [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
             ],
             funk: [
-                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0],  // Bass
-                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],  // Snare
-                [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]   // Hi-hat
+                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+                [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]
             ],
             jazz: [
-                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],  // Bass
-                [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],  // Snare
-                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]   // Hi-hat (swing)
+                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
             ],
             hiphop: [
-                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],  // Bass
-                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],  // Snare
-                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0]   // Hi-hat
+                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0]
             ]
         };
 
@@ -315,7 +338,6 @@ class Game {
         
         document.querySelector('.controls-container').appendChild(presetsContainer);
         
-        // Add listeners for preset buttons
         Object.keys(presets).forEach(preset => {
             document.getElementById(`preset-${preset}`).addEventListener('click', () => {
                 this.loadPreset(presets[preset]);
@@ -343,16 +365,100 @@ class Game {
                 }
             }
         }
-        
-        if (!this.aiActive && this.isStarted) {
-            this.aiActive = true;
-        }
     }
 
     clearGrid() {
         this.grid = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(false));
         this.aliens = [];
-        this.aiActive = false;
+    }
+
+    restartGame() {
+        this.currentWave = 1;
+        this.currentLoop = 1;
+        this.defenderHP = this.defenderMaxHP;
+        this.score = 0;
+        this.wavePhase = 'playing';
+        this.gameOver = false;
+        this.defenderLowHP = false;
+        
+        // Reset defender position
+        this.defender.x = this.canvas.width / 2;
+        
+        // Clear all projectiles and effects
+        this.bullets = [];
+        this.alienProjectiles = [];
+        this.explosions = [];
+        this.particles = [];
+        this.debris = [];
+        this.popups = [];
+        this.muzzleFlashes = [];
+        this.defenderSmokeParticles = [];
+        
+        // Reset AI for wave 1
+        this.updateAIForWave();
+        
+        // Respawn all aliens from grid pattern
+        this.respawnAliens();
+    }
+
+    respawnAliens() {
+        // Reset alive state for all aliens in the pattern
+        this.aliens = [];
+        for (let row = 0; row < this.gridRows; row++) {
+            for (let col = 0; col < this.gridCols; col++) {
+                if (this.grid[row][col]) {
+                    this.aliens.push({
+                        row,
+                        col,
+                        x: col * this.cellWidth + this.cellWidth / 2,
+                        y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                        alive: true
+                    });
+                }
+            }
+        }
+    }
+
+    updateAIForWave() {
+        // Scale AI based on wave number
+        if (this.currentWave === 1) {
+            this.shotDelay = 900;
+            this.aiAccuracy = 0.5;
+            this.aiShotsPerTurn = 1;
+        } else if (this.currentWave <= 2) {
+            this.shotDelay = 800;
+            this.aiAccuracy = 0.55;
+            this.aiShotsPerTurn = 1;
+        } else if (this.currentWave === 3) {
+            this.shotDelay = 700;
+            this.aiAccuracy = 0.6;
+            this.aiShotsPerTurn = 1;
+        } else if (this.currentWave === 4) {
+            this.shotDelay = 600;
+            this.aiAccuracy = 0.65;
+            this.aiShotsPerTurn = 1;
+        } else if (this.currentWave === 5) {
+            this.shotDelay = 500;
+            this.aiAccuracy = 0.7;
+            this.aiShotsPerTurn = 2; // Double shot!
+        } else if (this.currentWave === 6) {
+            this.shotDelay = 450;
+            this.aiAccuracy = 0.75;
+            this.aiShotsPerTurn = 2;
+        } else if (this.currentWave === 7) {
+            this.shotDelay = 400;
+            this.aiAccuracy = 0.8;
+            this.aiShotsPerTurn = 2;
+        } else if (this.currentWave >= 10) {
+            // Berserk mode
+            this.shotDelay = 200;
+            this.aiAccuracy = 0.9;
+            this.aiShotsPerTurn = 3; // Triple shot!
+        } else {
+            this.shotDelay = 350;
+            this.aiAccuracy = 0.85;
+            this.aiShotsPerTurn = 2;
+        }
     }
 
     moveDefender(direction) {
@@ -363,36 +469,58 @@ class Game {
     }
 
     updateAI() {
-        if (!this.aiActive || this.isPaused) return;
+        if (!this.aiActive || this.isPaused || this.wavePhase !== 'playing') return;
 
-        let nearestAlien = null;
-        let minDistance = Infinity;
-
-        for (const alien of this.aliens) {
-            if (!alien.alive) continue;
-            const distance = Math.abs(alien.x - (this.defender.x + this.defender.width / 2));
-            if (distance < minDistance) {
-                minDistance = distance;
-                nearestAlien = alien;
+        // Priority 1: Dodge incoming projectiles
+        let nearestProjectile = null;
+        let minProjDistance = Infinity;
+        
+        for (const proj of this.alienProjectiles) {
+            const distance = Math.abs(proj.x - (this.defender.x + this.defender.width / 2));
+            const timeToImpact = (this.defender.y - proj.y) / proj.speed;
+            
+            if (timeToImpact > 0 && timeToImpact < 60 && distance < minProjDistance) {
+                minProjDistance = distance;
+                nearestProjectile = proj;
             }
         }
 
-        if (nearestAlien) {
+        if (nearestProjectile && minProjDistance < 100) {
+            // Dodge left or right
             const defenderCenter = this.defender.x + this.defender.width / 2;
-            const direction = nearestAlien.x > defenderCenter ? 1 : -1;
-            
-            // Only move if not already close enough
-            if (Math.abs(nearestAlien.x - defenderCenter) > 10) {
-                this.moveDefender(direction);
+            const dodgeDirection = nearestProjectile.x > defenderCenter ? -1 : 1;
+            this.moveDefender(dodgeDirection);
+        } else {
+            // Priority 2: Find and shoot nearest alien
+            let nearestAlien = null;
+            let minDistance = Infinity;
+
+            for (const alien of this.aliens) {
+                if (!alien.alive) continue;
+                const distance = Math.abs(alien.x - (this.defender.x + this.defender.width / 2));
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    nearestAlien = alien;
+                }
             }
 
-            const currentTime = Date.now();
-            if (currentTime - this.lastShotTime >= this.shotDelay) {
-                // Miss sometimes based on accuracy
-                if (Math.random() < this.aiAccuracy) {
-                    this.shoot();
+            if (nearestAlien) {
+                const defenderCenter = this.defender.x + this.defender.width / 2;
+                const direction = nearestAlien.x > defenderCenter ? 1 : -1;
+                
+                if (Math.abs(nearestAlien.x - defenderCenter) > 10) {
+                    this.moveDefender(direction);
                 }
-                this.lastShotTime = currentTime;
+
+                const currentTime = Date.now();
+                if (currentTime - this.lastShotTime >= this.shotDelay) {
+                    if (Math.random() < this.aiAccuracy) {
+                        for (let i = 0; i < this.aiShotsPerTurn; i++) {
+                            this.shoot();
+                        }
+                    }
+                    this.lastShotTime = currentTime;
+                }
             }
         }
     }
@@ -404,7 +532,7 @@ class Game {
             width: 4,
             height: 10,
             speed: 10,
-            trail: [] // NEW: Bullet trail
+            trail: []
         });
     }
 
@@ -421,17 +549,14 @@ class Game {
         }
     }
 
-    // NEW: Add screen shake
     addShake(intensity) {
         this.shake.intensity += intensity;
     }
 
-    // NEW: Trigger freeze frame
     freezeFrame(frames = 3) {
         this.freezeFrames = frames;
     }
 
-    // NEW: Create debris when alien dies
     createDebris(x, y, row) {
         const colors = this.instrumentColors[row];
         const numFragments = 10;
@@ -456,25 +581,86 @@ class Game {
         }
     }
 
-    // NEW: Create floating text popup
-    createPopup(x, y, text, isOnBeat) {
+    createPopup(x, y, text, color = '#ffff00') {
         this.popups.push({
             x, y,
             text,
             life: 60,
             vy: -1.5,
-            color: isOnBeat ? '#ffff00' : '#00ff00',
-            scale: isOnBeat ? 1.5 : 1.0
+            color,
+            scale: 1.0
         });
+    }
+
+    createMuzzleFlash(x, y, row) {
+        const colors = this.instrumentColors[row];
+        this.muzzleFlashes.push({
+            x, y,
+            life: 8,
+            color: colors.primary
+        });
+    }
+
+    alienShoot(alien) {
+        // Count aliens on same column
+        const aliensOnStep = this.aliens.filter(a => 
+            a.col === alien.col && a.alive
+        ).length;
+        
+        // Damage scales with crossfire
+        let damage = 5;
+        if (aliensOnStep === 2) damage = 8;
+        if (aliensOnStep === 3) damage = 12;
+        
+        const colors = this.instrumentColors[alien.row];
+        this.alienProjectiles.push({
+            x: alien.x,
+            y: alien.y,
+            width: 6,
+            height: 12,
+            speed: 4,
+            damage,
+            color: colors.primary,
+            row: alien.row,
+            aliensOnStep
+        });
+        
+        // Muzzle flash
+        this.createMuzzleFlash(alien.x, alien.y, alien.row);
     }
 
     update() {
         if (this.isPaused) return;
 
-        // NEW: Freeze frame handling
+        // Freeze frame handling
         if (this.freezeFrames > 0) {
             this.freezeFrames--;
-            return; // Skip update during freeze
+            return;
+        }
+
+        // Handle wave phase transitions
+        if (this.wavePhase === 'prepare') {
+            this.phaseTimer++;
+            if (this.phaseTimer >= 180) { // 3 seconds at 60fps
+                this.wavePhase = 'playing';
+                this.phaseTimer = 0;
+                this.currentLoop = 1;
+                this.currentStep = 0;
+                this.lastStepTime = performance.now();
+            }
+            return; // Don't update game during prepare
+        } else if (this.wavePhase === 'complete') {
+            this.phaseTimer++;
+            if (this.phaseTimer >= 120) { // 2 seconds
+                this.currentWave++;
+                this.updateAIForWave();
+                this.wavePhase = 'prepare';
+                this.phaseTimer = 0;
+                this.respawnAliens();
+            }
+            return;
+        } else if (this.wavePhase === 'gameover') {
+            return; // Game is over
         }
 
         // Handle mobile touch controls
@@ -486,11 +672,11 @@ class Game {
             this.updateAI();
         }
 
-        // NEW: Calculate intensity (active beats / total possible)
+        // Calculate intensity
         const totalBeats = this.aliens.filter(a => a.alive).length;
         this.intensity = totalBeats / (this.gridRows * this.gridCols);
 
-        // NEW: Update screen shake
+        // Update screen shake
         if (this.shake.intensity > 0.1) {
             this.shake.x = (Math.random() - 0.5) * this.shake.intensity;
             this.shake.y = (Math.random() - 0.5) * this.shake.intensity;
@@ -501,7 +687,7 @@ class Game {
             this.shake.intensity = 0;
         }
 
-        // NEW: Update starfield
+        // Update starfield
         const starSpeed = 0.5 + (this.bpm / 120) * 0.5 + this.intensity * 2;
         for (const star of this.stars) {
             star.y += star.speed * starSpeed;
@@ -510,82 +696,139 @@ class Game {
                 star.x = Math.random() * this.canvas.width;
             }
             
-            // Decay pulse
             if (star.pulse > 0) {
                 star.pulse -= 0.05;
             }
         }
 
-        // Update bullets
+        // Update defender damage flash
+        if (this.defenderDamageFlash > 0) {
+            this.defenderDamageFlash -= 0.05;
+        }
+
+        // Update defender smoke when low HP
+        if (this.defenderLowHP) {
+            if (Math.random() < 0.3) {
+                this.defenderSmokeParticles.push({
+                    x: this.defender.x + this.defender.width / 2 + (Math.random() - 0.5) * 20,
+                    y: this.defender.y + 10,
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: -1 - Math.random(),
+                    life: 60,
+                    size: 3 + Math.random() * 4
+                });
+            }
+        }
+
+        // Update smoke particles
+        for (let i = this.defenderSmokeParticles.length - 1; i >= 0; i--) {
+            const p = this.defenderSmokeParticles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life--;
+            if (p.life <= 0) {
+                this.defenderSmokeParticles.splice(i, 1);
+            }
+        }
+
+        // Update bullets (defender shooting aliens)
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const bullet = this.bullets[i];
             
-            // NEW: Store trail positions
             bullet.trail.push({ x: bullet.x, y: bullet.y });
             if (bullet.trail.length > 5) bullet.trail.shift();
             
             bullet.y -= bullet.speed;
             
-            // Check for collisions with aliens
             let hitAlien = false;
             for (let j = 0; j < this.aliens.length; j++) {
                 const alien = this.aliens[j];
                 if (alien.alive && this.checkCollision(bullet, alien)) {
-                    // Calculate if hit was on-beat
-                    const isOnBeat = (alien.col === this.currentStep || 
-                                     alien.col === (this.currentStep - 1 + this.gridCols) % this.gridCols);
-                    
-                    if (isOnBeat) {
-                        this.score += this.onBeatBonus;
-                        this.combo++;
-                        if (this.combo > this.maxCombo) this.maxCombo = this.combo;
-                        this.createPopup(alien.x, alien.y, `+${this.onBeatBonus} ON BEAT!`, true);
-                    } else {
-                        this.score += this.normalHitScore;
-                        this.combo = 0;
-                        this.createPopup(alien.x, alien.y, `+${this.normalHitScore}`, false);
-                    }
-                    
-                    // NEW: Trigger freeze frame and shake on kill
-                    this.freezeFrame(2);
-                    this.addShake(6 * (1 + this.intensity));
-                    
-                    // NEW: Create debris
+                    // Kill alien for this loop only
+                    alien.alive = false;
                     this.createDebris(alien.x, alien.y, alien.row);
-                    
-                    // Remove alien permanently (clears from drum pattern)
-                    this.grid[alien.row][alien.col] = false;
-                    this.createExplosion(alien.x, alien.y, isOnBeat);
-                    this.aliens.splice(j, 1);
+                    this.createExplosion(alien.x, alien.y, false);
+                    this.freezeFrame(2);
+                    this.addShake(6);
                     this.bullets.splice(i, 1);
                     hitAlien = true;
                     break;
                 }
             }
             
-            // Remove bullets that are off screen
             if (!hitAlien && bullet.y < 0) {
                 this.bullets.splice(i, 1);
             }
         }
 
-        // NEW: Update debris
+        // Update alien projectiles
+        for (let i = this.alienProjectiles.length - 1; i >= 0; i--) {
+            const proj = this.alienProjectiles[i];
+            proj.y += proj.speed;
+            
+            // Check collision with defender
+            if (proj.y >= this.defender.y && 
+                proj.y <= this.defender.y + this.defender.height &&
+                proj.x >= this.defender.x &&
+                proj.x <= this.defender.x + this.defender.width) {
+                
+                // Defender takes damage!
+                this.defenderHP -= proj.damage;
+                this.score += proj.damage;
+                
+                // Bonus score for crossfire
+                if (proj.aliensOnStep === 2) {
+                    this.score += 10;
+                    this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 
+                        `+${proj.damage + 10} CROSSFIRE!`, '#ff00ff');
+                } else if (proj.aliensOnStep === 3) {
+                    this.score += 30;
+                    this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 
+                        `+${proj.damage + 30} FULL BARRAGE!`, '#ff0000');
+                } else {
+                    this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 
+                        `+${proj.damage}`, '#ffff00');
+                }
+                
+                // Visual feedback
+                this.defenderDamageFlash = 1.0;
+                this.addShake(10 + proj.aliensOnStep * 5);
+                this.freezeFrame(3);
+                
+                // Check if defender is low HP
+                if (this.defenderHP <= this.defenderMaxHP * 0.25 && !this.defenderLowHP) {
+                    this.defenderLowHP = true;
+                }
+                
+                // Explosion at defender
+                this.createExplosion(proj.x, proj.y, false);
+                this.alienProjectiles.splice(i, 1);
+                
+                // Check win condition
+                if (this.defenderHP <= 0) {
+                    this.defenderHP = 0;
+                    this.waveComplete();
+                }
+            } else if (proj.y > this.canvas.height) {
+                this.alienProjectiles.splice(i, 1);
+            }
+        }
+
+        // Update debris
         for (let i = this.debris.length - 1; i >= 0; i--) {
             const d = this.debris[i];
             d.x += d.vx;
             d.y += d.vy;
-            d.vy += 0.3; // gravity
+            d.vy += 0.3;
             d.rotation += d.rotationSpeed;
             d.life -= 0.008;
             
-            // Bounce off bottom
             if (d.y > this.canvas.height - 5 && d.vy > 0) {
                 d.vy *= -0.5;
                 d.vx *= 0.8;
                 if (!d.bounced) d.bounced = true;
             }
             
-            // Bounce off walls
             if (d.x < 0 || d.x > this.canvas.width) {
                 d.vx *= -0.8;
             }
@@ -595,7 +838,7 @@ class Game {
             }
         }
 
-        // NEW: Update popups
+        // Update popups
         for (let i = this.popups.length - 1; i >= 0; i--) {
             const p = this.popups[i];
             p.y += p.vy;
@@ -605,14 +848,38 @@ class Game {
             }
         }
 
+        // Update muzzle flashes
+        for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
+            this.muzzleFlashes[i].life--;
+            if (this.muzzleFlashes[i].life <= 0) {
+                this.muzzleFlashes.splice(i, 1);
+            }
+        }
+
         // Update drum sequence
         const currentTime = performance.now();
         if (currentTime - this.lastStepTime >= this.stepInterval) {
             this.lastStepTime = currentTime;
             this.currentStep = (this.currentStep + 1) % this.gridCols;
-            this.stepPulse = 1.0; // Trigger pulse animation
             
-            // Play sounds for active aliens in current step
+            // Check if loop completed
+            if (this.currentStep === 0) {
+                this.currentLoop++;
+                if (this.currentLoop > this.loopsPerWave) {
+                    // Wave completed
+                    if (this.defenderHP > 0) {
+                        // Player loses - defender survived
+                        this.gameLost();
+                    }
+                } else {
+                    // Respawn aliens for next loop
+                    this.respawnAliens();
+                }
+            }
+            
+            this.stepPulse = 1.0;
+            
+            // Play sounds and aliens shoot
             for (let row = 0; row < this.gridRows; row++) {
                 if (this.grid[row][this.currentStep]) {
                     const alien = this.aliens.find(a => a.row === row && a.col === this.currentStep && a.alive);
@@ -621,15 +888,12 @@ class Game {
                         this.beatFlash[row][this.currentStep] = 1.0;
                         this.createSoundParticles(alien.x, alien.y, row);
                         
-                        // NEW: Screen shake per instrument
-                        const shakeIntensities = [
-                            8 + this.intensity * 4,  // Bass - heavy
-                            5,                        // Snare - sharp
-                            2                         // Hi-hat - subtle
-                        ];
+                        // Alien shoots!
+                        this.alienShoot(alien);
+                        
+                        const shakeIntensities = [8 + this.intensity * 4, 5, 2];
                         this.addShake(shakeIntensities[row]);
                         
-                        // NEW: Pulse stars on beat
                         this.stars.forEach(star => {
                             if (Math.random() < 0.3) star.pulse = 1.0;
                         });
@@ -655,13 +919,38 @@ class Game {
             const p = this.particles[i];
             p.x += p.vx;
             p.y += p.vy;
-            p.vy += 0.2; // gravity
+            p.vy += 0.2;
             p.life--;
             
             if (p.life <= 0) {
                 this.particles.splice(i, 1);
             }
         }
+
+        // Check lose condition - all aliens dead
+        const aliveAliens = this.aliens.filter(a => a.alive).length;
+        if (aliveAliens === 0 && this.aliens.length > 0 && this.wavePhase === 'playing') {
+            this.gameLost();
+        }
+    }
+
+    waveComplete() {
+        // Defender destroyed - player wins wave
+        this.score += this.currentWave * 500; // Wave completion bonus
+        this.defenderHP = this.defenderMaxHP; // Reset HP for next wave
+        this.defenderLowHP = false;
+        this.wavePhase = 'complete';
+        this.phaseTimer = 0;
+        
+        // Clear projectiles
+        this.alienProjectiles = [];
+        this.bullets = [];
+    }
+
+    gameLost() {
+        // All aliens destroyed or wave loops completed with defender alive
+        this.wavePhase = 'gameover';
+        this.gameOver = true;
     }
 
     createSoundParticles(x, y, row) {
@@ -688,7 +977,6 @@ class Game {
             particles: []
         });
         
-        // Create explosion particles
         const numParticles = isOnBeat ? 20 : 12;
         const colors = isOnBeat ? ['#ffff00', '#ff00ff', '#00ffff'] : ['#ff4400', '#00aaff', '#cc00ff'];
         
@@ -714,17 +1002,14 @@ class Game {
     }
 
     draw() {
-        // Save context for shake transform
         this.ctx.save();
-        
-        // NEW: Apply screen shake
         this.ctx.translate(this.shake.x, this.shake.y);
         
         // Clear canvas
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(-10, -10, this.canvas.width + 20, this.canvas.height + 20);
 
-        // NEW: Draw starfield
+        // Draw starfield
         for (const star of this.stars) {
             const brightness = star.brightness + star.pulse * 0.5;
             this.ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
@@ -733,8 +1018,8 @@ class Game {
             this.ctx.fill();
         }
 
-        // NEW: Draw beat column flash
-        if (this.stepPulse > 0) {
+        // Draw beat column flash
+        if (this.stepPulse > 0 && this.wavePhase === 'playing') {
             for (let row = 0; row < this.gridRows; row++) {
                 if (this.grid[row][this.currentStep]) {
                     const colors = this.instrumentColors[row];
@@ -760,7 +1045,7 @@ class Game {
             }
         }
 
-        // Draw grid with beat flash (NEW: dark gray grid lines)
+        // Draw grid
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
                 const flashIntensity = this.beatFlash[row][col];
@@ -787,7 +1072,6 @@ class Game {
                     );
                 }
                 
-                // NEW: Dark gray grid lines
                 this.ctx.strokeStyle = col % 4 === 0 ? '#444444' : '#333333';
                 this.ctx.strokeRect(
                     col * this.cellWidth,
@@ -798,19 +1082,21 @@ class Game {
             }
         }
 
-        // Draw current step indicator with pulse
-        const pulseScale = 1 + (this.stepPulse * 0.3);
-        this.ctx.strokeStyle = '#00ff00';
-        this.ctx.lineWidth = 2 * pulseScale;
-        this.ctx.strokeRect(
-            this.currentStep * this.cellWidth,
-            this.gridYOffset,
-            this.cellWidth,
-            this.gridRows * this.cellHeight
-        );
-        this.ctx.lineWidth = 1;
+        // Draw current step indicator
+        if (this.wavePhase === 'playing') {
+            const pulseScale = 1 + (this.stepPulse * 0.3);
+            this.ctx.strokeStyle = '#00ff00';
+            this.ctx.lineWidth = 2 * pulseScale;
+            this.ctx.strokeRect(
+                this.currentStep * this.cellWidth,
+                this.gridYOffset,
+                this.cellWidth,
+                this.gridRows * this.cellHeight
+            );
+            this.ctx.lineWidth = 1;
+        }
 
-        // Draw aliens (NEW: colored by instrument)
+        // Draw aliens
         for (const alien of this.aliens) {
             if (alien.alive) {
                 const colors = this.instrumentColors[alien.row];
@@ -819,7 +1105,7 @@ class Game {
                 this.ctx.lineWidth = 2;
                 
                 switch(alien.row) {
-                    case 0: // Bass - Heavy battleship
+                    case 0: // Bass
                         this.ctx.fillRect(alien.x - 20, alien.y - 8, 40, 16);
                         this.ctx.strokeRect(alien.x - 20, alien.y - 8, 40, 16);
                         this.ctx.fillRect(alien.x - 10, alien.y - 12, 20, 8);
@@ -836,7 +1122,7 @@ class Game {
                         this.ctx.fill();
                         break;
                         
-                    case 1: // Snare - Fast fighter
+                    case 1: // Snare
                         this.ctx.beginPath();
                         this.ctx.moveTo(alien.x, alien.y - 15);
                         this.ctx.lineTo(alien.x + 15, alien.y + 5);
@@ -850,7 +1136,7 @@ class Game {
                         this.ctx.stroke();
                         break;
                         
-                    case 2: // Hi-hat - Classic UFO
+                    case 2: // Hi-hat
                         this.ctx.beginPath();
                         this.ctx.ellipse(alien.x, alien.y, 20, 8, 0, 0, Math.PI * 2);
                         this.ctx.fill();
@@ -865,8 +1151,35 @@ class Game {
             }
         }
 
-        // Draw defender (stays green)
-        this.ctx.fillStyle = '#00ff00';
+        // Draw muzzle flashes
+        for (const flash of this.muzzleFlashes) {
+            const alpha = flash.life / 8;
+            this.ctx.globalAlpha = alpha;
+            this.ctx.fillStyle = flash.color;
+            this.ctx.shadowBlur = 20;
+            this.ctx.shadowColor = flash.color;
+            this.ctx.beginPath();
+            this.ctx.arc(flash.x, flash.y, 8, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.shadowBlur = 0;
+        }
+        this.ctx.globalAlpha = 1;
+
+        // Draw defender
+        const defenderFlash = this.defenderDamageFlash > 0;
+        this.ctx.fillStyle = defenderFlash ? '#ff0000' : '#00ff00';
+        
+        // Smoke particles
+        for (const p of this.defenderSmokeParticles) {
+            const alpha = p.life / 60;
+            this.ctx.globalAlpha = alpha * 0.5;
+            this.ctx.fillStyle = '#888888';
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+        this.ctx.globalAlpha = 1;
+        
         this.ctx.fillRect(
             this.defender.x,
             this.defender.y + 10,
@@ -889,9 +1202,25 @@ class Game {
             12
         );
 
-        // NEW: Draw bullets with trails
+        // Draw defender HP bar above ship
+        const barWidth = 60;
+        const barHeight = 8;
+        const barX = this.defender.x + this.defender.width/2 - barWidth/2;
+        const barY = this.defender.y - 20;
+        
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.strokeRect(barX, barY, barWidth, barHeight);
+        
+        const hpPercent = this.defenderHP / this.defenderMaxHP;
+        let hpColor = '#00ff00';
+        if (hpPercent <= 0.25) hpColor = '#ff0000';
+        else if (hpPercent <= 0.5) hpColor = '#ffff00';
+        
+        this.ctx.fillStyle = hpColor;
+        this.ctx.fillRect(barX + 1, barY + 1, (barWidth - 2) * hpPercent, barHeight - 2);
+
+        // Draw bullets
         for (const bullet of this.bullets) {
-            // Draw trail
             for (let i = 0; i < bullet.trail.length; i++) {
                 const t = bullet.trail[i];
                 const alpha = (i + 1) / bullet.trail.length * 0.5;
@@ -901,7 +1230,6 @@ class Game {
                 this.ctx.fill();
             }
             
-            // Draw bullet with glow
             this.ctx.shadowBlur = 10;
             this.ctx.shadowColor = '#00ff00';
             this.ctx.fillStyle = '#00ff00';
@@ -910,7 +1238,16 @@ class Game {
             this.ctx.shadowBlur = 0;
         }
 
-        // NEW: Draw debris
+        // Draw alien projectiles
+        for (const proj of this.alienProjectiles) {
+            this.ctx.shadowBlur = 10;
+            this.ctx.shadowColor = proj.color;
+            this.ctx.fillStyle = proj.color;
+            this.ctx.fillRect(proj.x - proj.width/2, proj.y, proj.width, proj.height);
+            this.ctx.shadowBlur = 0;
+        }
+
+        // Draw debris
         for (const d of this.debris) {
             this.ctx.save();
             this.ctx.translate(d.x, d.y);
@@ -941,7 +1278,6 @@ class Game {
             const radius = progress * 40;
             const opacity = 1 - progress;
             
-            // Multi-colored explosion rings
             if (explosion.isOnBeat) {
                 this.ctx.beginPath();
                 this.ctx.arc(explosion.x, explosion.y, radius * 0.7, 0, Math.PI * 2);
@@ -968,8 +1304,8 @@ class Game {
             }
         }
 
-        // NEW: Draw popups
-        this.ctx.font = 'bold 16px "Courier New"';
+        // Draw popups
+        this.ctx.font = 'bold 14px "Courier New"';
         for (const p of this.popups) {
             const alpha = p.life / 60;
             this.ctx.globalAlpha = alpha;
@@ -983,23 +1319,117 @@ class Game {
         }
         this.ctx.globalAlpha = 1;
 
-        // Draw score
+        this.ctx.restore(); // End shake transform
+
+        // Draw UI elements (not affected by shake)
+        
+        // Score
         this.ctx.fillStyle = '#00ff00';
-        this.ctx.font = '20px "Courier New"';
+        this.ctx.font = 'bold 20px "Courier New"';
         this.ctx.fillText(`Score: ${this.score}`, 10, 30);
         
-        if (this.combo > 1) {
+        // Wave counter (top right)
+        this.ctx.textAlign = 'right';
+        this.ctx.fillStyle = '#00ff00';
+        this.ctx.font = 'bold 24px "Courier New"';
+        this.ctx.fillText(`WAVE ${this.currentWave}`, this.canvas.width - 10, 30);
+        
+        // Loop counter
+        if (this.wavePhase === 'playing') {
             this.ctx.fillStyle = '#ffff00';
-            this.ctx.fillText(`Combo: ${this.combo}x`, 10, 55);
+            this.ctx.font = 'bold 16px "Courier New"';
+            this.ctx.fillText(`Loop ${this.currentLoop}/${this.loopsPerWave}`, this.canvas.width - 10, 55);
         }
         
-        this.ctx.fillStyle = '#00ff00';
-        this.ctx.fillText(`Max Combo: ${this.maxCombo}`, 10, 80);
+        this.ctx.textAlign = 'left';
         
-        // Restore context after shake
-        this.ctx.restore();
+        // HP bar at bottom
+        const bottomBarY = this.canvas.height - 25;
+        const bottomBarWidth = 200;
+        const bottomBarX = this.canvas.width / 2 - bottomBarWidth / 2;
         
-        // NEW: Apply intensity-based glow to canvas via CSS
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(bottomBarX, bottomBarY, bottomBarWidth, 15);
+        
+        const hpPercent = Math.max(0, this.defenderHP / this.defenderMaxHP);
+        let hpColor = '#00ff00';
+        if (hpPercent <= 0.25) hpColor = '#ff0000';
+        else if (hpPercent <= 0.5) hpColor = '#ffff00';
+        
+        this.ctx.fillStyle = hpColor;
+        this.ctx.fillRect(bottomBarX + 2, bottomBarY + 2, (bottomBarWidth - 4) * hpPercent, 11);
+        
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 12px "Courier New"';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`DEFENDER HP: ${Math.max(0, this.defenderHP)}/${this.defenderMaxHP}`, 
+            this.canvas.width / 2, bottomBarY - 5);
+        this.ctx.textAlign = 'left';
+        this.ctx.lineWidth = 1;
+
+        // Wave phase overlays
+        if (this.wavePhase === 'prepare') {
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.font = 'bold 48px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('PREPARE', this.canvas.width / 2, this.canvas.height / 2 - 40);
+            
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = 'bold 24px "Courier New"';
+            this.ctx.fillText(`Wave ${this.currentWave} Starting...`, this.canvas.width / 2, this.canvas.height / 2 + 20);
+            
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = '16px "Courier New"';
+            this.ctx.fillText('Edit your pattern now!', this.canvas.width / 2, this.canvas.height / 2 + 60);
+            this.ctx.textAlign = 'left';
+        } else if (this.wavePhase === 'complete') {
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            const scale = 1 + Math.sin(this.phaseTimer * 0.1) * 0.1;
+            this.ctx.save();
+            this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2 - 40);
+            this.ctx.scale(scale, scale);
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = 'bold 48px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('WAVE COMPLETE!', 0, 0);
+            this.ctx.restore();
+            
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.font = 'bold 32px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(`Score: ${this.score}`, this.canvas.width / 2, this.canvas.height / 2 + 30);
+            this.ctx.textAlign = 'left';
+        } else if (this.wavePhase === 'gameover') {
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            this.ctx.fillStyle = '#ff0000';
+            this.ctx.font = 'bold 48px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('DEFENSE HELD', this.canvas.width / 2, this.canvas.height / 2 - 60);
+            
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 32px "Courier New"';
+            this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 10);
+            
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.font = 'bold 24px "Courier New"';
+            this.ctx.fillText(`Wave Reached: ${this.currentWave}`, this.canvas.width / 2, this.canvas.height / 2 + 40);
+            this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width / 2, this.canvas.height / 2 + 75);
+            
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = '18px "Courier New"';
+            this.ctx.fillText('Press R to Restart', this.canvas.width / 2, this.canvas.height / 2 + 120);
+            this.ctx.textAlign = 'left';
+        }
+
+        // Apply intensity glow
         const glowIntensity = Math.floor(this.intensity * 20);
         this.canvas.style.boxShadow = `0 0 ${glowIntensity}px rgba(0, 255, 0, ${this.intensity * 0.5})`;
     }
@@ -1009,7 +1439,7 @@ class Game {
             this.update();
             this.draw();
         } else {
-            this.draw(); // Still draw when paused
+            this.draw();
         }
         requestAnimationFrame(() => this.animate());
     }
