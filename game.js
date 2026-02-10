@@ -67,8 +67,8 @@ class Game {
         
         // AI settings
         this.lastShotTime = 0;
-        this.shotDelay = 300;
-        this.aiAccuracy = 1.0;
+        this.shotDelay = 900;
+        this.aiAccuracy = 0.6;
         this.aiActive = false;
         
         this.defender = {
@@ -368,11 +368,18 @@ class Game {
         if (nearestAlien) {
             const defenderCenter = this.defender.x + this.defender.width / 2;
             const direction = nearestAlien.x > defenderCenter ? 1 : -1;
-            this.moveDefender(direction);
+            
+            // Only move if not already close enough
+            if (Math.abs(nearestAlien.x - defenderCenter) > 10) {
+                this.moveDefender(direction);
+            }
 
             const currentTime = Date.now();
             if (currentTime - this.lastShotTime >= this.shotDelay) {
-                this.shoot();
+                // Miss sometimes based on accuracy
+                if (Math.random() < this.aiAccuracy) {
+                    this.shoot();
+                }
                 this.lastShotTime = currentTime;
             }
         }
