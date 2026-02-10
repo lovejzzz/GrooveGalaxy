@@ -1,135 +1,43 @@
 class DrumMachine {
     constructor() {
         this.audioContext = null;
+        this.sounds = [];
         this.isInitialized = false;
-        this.soundOrder = [0, 1, 2]; // Maps row index to sound index (bass, snare, hi-hat, tom, cymbal)
-        this.currentKit = '808'; // Default kit
-        this.noiseBuffer = null; // For noise-based sounds
-        
-        // Sound kit definitions
-        this.kits = {
-            '808': {
-                name: '808',
-                bass: { freq: 80, decay: 0.2, wave: 'sine' },
-                snare: { freq: 180, decay: 0.15, wave: 'triangle', noise: true, noiseMix: 0.6 },
-                hihat: { freq: 10000, decay: 0.08, wave: 'square', noise: true, noiseMix: 0.9 },
-                tom: { freq: 200, decay: 0.15, wave: 'triangle' },
-                cymbal: { freq: 3000, decay: 0.5, wave: 'square', noise: true, noiseMix: 0.8 }
-            },
-            'acoustic': {
-                name: 'Acoustic',
-                bass: { freq: 60, decay: 0.3, wave: 'sine' },
-                snare: { freq: 220, decay: 0.12, wave: 'triangle', noise: true, noiseMix: 0.7 },
-                hihat: { freq: 8000, decay: 0.05, wave: 'square', noise: true, noiseMix: 0.95 },
-                tom: { freq: 180, decay: 0.2, wave: 'sine' },
-                cymbal: { freq: 4000, decay: 0.5, wave: 'square', noise: true, noiseMix: 0.85 }
-            },
-            'electronic': {
-                name: 'Electronic',
-                bass: { freq: 40, freq2: 80, decay: 0.1, wave: 'sawtooth' }, // Sub-bass + overtone
-                snare: { freq: 200, decay: 0.1, wave: 'square', noise: true, noiseMix: 0.5 },
-                hihat: { freq: 12000, freq2: 12100, decay: 0.06, wave: 'square' }, // Detuned for metallic
-                tom: { freq: 150, decay: 0.12, wave: 'square' },
-                cymbal: { freq: 5000, freq2: 5200, decay: 0.4, wave: 'square' }
-            }
-        };
+        this.soundOrder = [0, 1, 2]; // Maps row index to sound index (bass, snare, hi-hat)
     }
 
     async init() {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const soundFiles = ['bassdrum.wav', 'snare.wav', 'hi-hat.wav'];
         
-        // Create noise buffer for snare/hihat sounds
-        const bufferSize = this.audioContext.sampleRate * 0.5; // 0.5 seconds of noise
-        this.noiseBuffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
-        const output = this.noiseBuffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-            output[i] = Math.random() * 2 - 1;
+        try {
+            this.sounds = await Promise.all(
+                soundFiles.map(file => 
+                    fetch(`DrumAudio/${file}`)
+                        .then(response => response.arrayBuffer())
+                        .then(buffer => this.audioContext.decodeAudioData(buffer))
+                        .catch(err => {
+                            console.warn(`Failed to load ${file}:`, err);
+                            return null;
+                        })
+                )
+            );
+
+            this.isInitialized = true;
+        } catch (error) {
+            console.error('Error loading sounds:', error);
         }
-        
-        this.isInitialized = true;
     }
 
-    setKit(kitName) {
-        if (this.kits[kitName]) {
-            this.currentKit = kitName;
-        }
-    }
-
-    playSound(rowIndex) {
+    playSound(index) {
         if (!this.isInitialized) return;
+        const buffer = this.sounds[this.soundOrder[index]];
+        if (!buffer) return;
         
-        const soundTypes = ['bass', 'snare', 'hihat', 'tom', 'cymbal'];
-        const soundType = soundTypes[rowIndex] || 'bass';
-        const kit = this.kits[this.currentKit];
-        const params = kit[soundType];
-        
-        if (!params) return;
-        
-        const now = this.audioContext.currentTime;
-        const gainNode = this.audioContext.createGain();
-        gainNode.connect(this.audioContext.destination);
-        
-        // Volume envelope
-        gainNode.gain.setValueAtTime(0.4, now);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, now + params.decay);
-        
-        // Oscillator component
-        if (params.wave) {
-            const osc = this.audioContext.createOscillator();
-            osc.type = params.wave;
-            osc.frequency.setValueAtTime(params.freq, now);
-            
-            // Frequency envelope for kick/tom (pitch drops)
-            if (soundType === 'bass' || soundType === 'tom') {
-                osc.frequency.exponentialRampToValueAtTime(params.freq * 0.5, now + params.decay * 0.3);
-            }
-            
-            const oscGain = this.audioContext.createGain();
-            oscGain.gain.setValueAtTime(params.noise ? (1 - params.noiseMix) : 1, now);
-            
-            osc.connect(oscGain);
-            oscGain.connect(gainNode);
-            osc.start(now);
-            osc.stop(now + params.decay);
-        }
-        
-        // Second oscillator for detuned/layered sounds (electronic kit)
-        if (params.freq2) {
-            const osc2 = this.audioContext.createOscillator();
-            osc2.type = params.wave;
-            osc2.frequency.setValueAtTime(params.freq2, now);
-            
-            if (soundType === 'bass') {
-                osc2.frequency.exponentialRampToValueAtTime(params.freq2 * 0.5, now + params.decay * 0.3);
-            }
-            
-            const osc2Gain = this.audioContext.createGain();
-            osc2Gain.gain.setValueAtTime(0.3, now);
-            
-            osc2.connect(osc2Gain);
-            osc2Gain.connect(gainNode);
-            osc2.start(now);
-            osc2.stop(now + params.decay);
-        }
-        
-        // Noise component for snare/hihat/cymbal
-        if (params.noise && this.noiseBuffer) {
-            const noise = this.audioContext.createBufferSource();
-            noise.buffer = this.noiseBuffer;
-            
-            const noiseFilter = this.audioContext.createBiquadFilter();
-            noiseFilter.type = soundType === 'cymbal' ? 'bandpass' : 'highpass';
-            noiseFilter.frequency.setValueAtTime(soundType === 'hihat' ? params.freq : 1000, now);
-            
-            const noiseGain = this.audioContext.createGain();
-            noiseGain.gain.setValueAtTime(params.noiseMix || 0.5, now);
-            
-            noise.connect(noiseFilter);
-            noiseFilter.connect(noiseGain);
-            noiseGain.connect(gainNode);
-            noise.start(now);
-            noise.stop(now + params.decay);
-        }
+        const source = this.audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioContext.destination);
+        source.start();
     }
 }
 
@@ -164,11 +72,22 @@ class Game {
         this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'cardpick', 'gameover'
         this.phaseTimer = 0;
         
+        // NEW: Boss system
+        this.isBossWave = false;
+        this.bossDefeatedText = 0; // frames to show "BOSS DEFEATED"
+        
         // NEW: Card upgrade system
         this.upgrades = {}; // Tracks applied upgrades
         this.currentCardChoices = []; // 3 cards shown to player
         this.hoveredCardIndex = -1; // Which card is mouse over
         this.fireZones = []; // For Napalm Rounds upgrade
+        
+        // NEW: High scores (localStorage)
+        this.loadHighScores();
+        
+        // NEW: Tutorial system
+        this.tutorialStep = -1; // -1 = not showing, 0-2 = steps
+        this.checkTutorial();
         
         // NEW: Defender HP system
         this.defenderMaxHP = 60;
@@ -176,7 +95,11 @@ class Game {
         this.defenderDamageFlash = 0;
         this.defenderLowHP = false;
         this.defenderSmokeParticles = [];
-        this.defenderStunned = 0; // Frames remaining of stun
+        
+        // Boss special attacks
+        this.bossShield = 0; // hits to absorb
+        this.bossShieldTimer = 0;
+        this.bossMissileTimer = 0;
         
         // AI settings - now scales with waves
         this.lastShotTime = 0;
@@ -206,13 +129,11 @@ class Game {
         this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
         this.stepPulse = 0;
         
-        // Instrument colors (supports up to 5 rows)
+        // Instrument colors
         this.instrumentColors = [
-            { primary: '#ff4444', secondary: '#ff6600', name: 'Bass' },
-            { primary: '#4488ff', secondary: '#ffffff', name: 'Snare' },
-            { primary: '#aa44ff', secondary: '#ff00cc', name: 'Hi-hat' },
-            { primary: '#00ffff', secondary: '#00aaaa', name: 'Tom' },
-            { primary: '#ffd700', secondary: '#ffaa00', name: 'Cymbal' }
+            { primary: '#ff4400', secondary: '#ff6600', name: 'Bass' },
+            { primary: '#00aaff', secondary: '#ffffff', name: 'Snare' },
+            { primary: '#cc00ff', secondary: '#ff00cc', name: 'Hi-hat' }
         ];
         
         // Screen shake system
@@ -264,6 +185,9 @@ class Game {
             spreadShot: 0  // frames remaining
         };
         
+        // NEW: Toast notification system
+        this.toast = null;
+        
         this.gameOver = false;
         this.isPaused = false;
         this.isStarted = false;
@@ -282,6 +206,163 @@ class Game {
         // Setup event listeners (called once in constructor)
         this.setupEventListeners();
         this.setupMobileControls();
+        
+        // Load pattern from URL if present
+        this.loadPatternFromURL();
+    }
+    
+    loadHighScores() {
+        try {
+            const saved = localStorage.getItem('grooveGalaxyHighScore');
+            if (saved) {
+                const data = JSON.parse(saved);
+                this.highScore = data.score || 0;
+                this.highWave = data.wave || 1;
+            } else {
+                this.highScore = 0;
+                this.highWave = 1;
+            }
+        } catch (e) {
+            console.warn('Failed to load high scores:', e);
+            this.highScore = 0;
+            this.highWave = 1;
+        }
+    }
+    
+    saveHighScores() {
+        try {
+            if (this.score > this.highScore || this.currentWave > this.highWave) {
+                this.highScore = Math.max(this.score, this.highScore);
+                this.highWave = Math.max(this.currentWave, this.highWave);
+                localStorage.setItem('grooveGalaxyHighScore', JSON.stringify({
+                    score: this.highScore,
+                    wave: this.highWave
+                }));
+            }
+        } catch (e) {
+            console.warn('Failed to save high scores:', e);
+        }
+    }
+    
+    checkTutorial() {
+        try {
+            const seen = localStorage.getItem('grooveGalaxyTutorialSeen');
+            if (!seen) {
+                this.tutorialStep = 0;
+            }
+        } catch (e) {
+            console.warn('Failed to check tutorial:', e);
+        }
+    }
+    
+    skipTutorial() {
+        try {
+            localStorage.setItem('grooveGalaxyTutorialSeen', 'true');
+            this.tutorialStep = -1;
+        } catch (e) {
+            console.warn('Failed to skip tutorial:', e);
+            this.tutorialStep = -1;
+        }
+    }
+    
+    advanceTutorial() {
+        if (this.tutorialStep >= 2) {
+            this.skipTutorial();
+        } else {
+            this.tutorialStep++;
+        }
+    }
+    
+    loadPatternFromURL() {
+        try {
+            const hash = window.location.hash.substring(1);
+            if (!hash) return;
+            
+            const params = new URLSearchParams(hash);
+            const pattern = params.get('pattern');
+            const bpm = params.get('bpm');
+            
+            if (pattern) {
+                const rows = pattern.split('-');
+                if (rows.length >= 3) {
+                    this.clearGrid();
+                    for (let row = 0; row < Math.min(rows.length, 3); row++) {
+                        const rowBits = parseInt(rows[row], 16);
+                        for (let col = 0; col < 16; col++) {
+                            if (rowBits & (1 << (15 - col))) {
+                                this.grid[row][col] = true;
+                                this.aliens.push({
+                                    row,
+                                    col,
+                                    x: col * this.cellWidth + this.cellWidth / 2,
+                                    y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                                    alive: true
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (bpm) {
+                const newBpm = parseInt(bpm);
+                if (newBpm >= 60 && newBpm <= 200) {
+                    this.bpm = newBpm;
+                    this.bpmControl.value = newBpm;
+                    this.bpmValue.textContent = newBpm;
+                    this.stepInterval = (60 / this.bpm) * 1000 / 4;
+                    const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
+                    this.defender.speed = Math.round(5 * speedScale);
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to load pattern from URL:', e);
+        }
+    }
+    
+    encodePatternToURL() {
+        try {
+            const rows = [];
+            for (let row = 0; row < 3; row++) {
+                let rowBits = 0;
+                for (let col = 0; col < 16; col++) {
+                    if (this.grid[row][col]) {
+                        rowBits |= (1 << (15 - col));
+                    }
+                }
+                rows.push(rowBits.toString(16).padStart(4, '0'));
+            }
+            
+            const pattern = rows.join('-');
+            const url = `${window.location.origin}${window.location.pathname}#pattern=${pattern}&bpm=${this.bpm}`;
+            
+            // Copy to clipboard
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                    this.showToast('Copied to clipboard!');
+                }).catch(() => {
+                    this.showToast('Pattern encoded! (Copy manually)');
+                    console.log('Share URL:', url);
+                });
+            } else {
+                // Fallback for older browsers
+                this.showToast('Pattern encoded! Check console');
+                console.log('Share URL:', url);
+            }
+            
+            // Also update the actual URL hash
+            window.location.hash = `pattern=${pattern}&bpm=${this.bpm}`;
+        } catch (e) {
+            console.warn('Failed to encode pattern:', e);
+            this.showToast('Failed to create share link');
+        }
+    }
+    
+    showToast(message) {
+        this.toast = {
+            message,
+            life: 120 // 2 seconds at 60fps
+        };
     }
 
     initStarfield() {
@@ -519,6 +600,12 @@ class Game {
 
         // Canvas click for grid editing and card selection
         this.canvas.addEventListener('click', (e) => {
+            // Tutorial advance
+            if (this.tutorialStep >= 0) {
+                this.advanceTutorial();
+                return;
+            }
+            
             // Tap to restart on game over
             if (this.wavePhase === 'gameover') {
                 this.restartGame();
@@ -576,9 +663,6 @@ class Game {
 
         // Preset pattern buttons
         this.setupPresetButtons();
-        
-        // Sound kit selector buttons
-        this.setupKitButtons();
     }
 
     toggleGridCell(row, col) {
@@ -639,30 +723,14 @@ class Game {
                 this.clearGrid();
             });
         }
-    }
-
-    setupKitButtons() {
-        const kitButtons = {
-            'kit-808': '808',
-            'kit-acoustic': 'acoustic',
-            'kit-electronic': 'electronic'
-        };
         
-        Object.keys(kitButtons).forEach(btnId => {
-            const btn = document.getElementById(btnId);
-            if (btn) {
-                btn.addEventListener('click', () => {
-                    const kitName = kitButtons[btnId];
-                    this.drumMachine.setKit(kitName);
-                    
-                    // Update active state
-                    document.querySelectorAll('.kit-button').forEach(b => {
-                        b.classList.remove('active');
-                    });
-                    btn.classList.add('active');
-                });
-            }
-        });
+        // NEW: Share button
+        const shareBtn = document.getElementById('preset-share');
+        if (shareBtn) {
+            shareBtn.addEventListener('click', () => {
+                this.encodePatternToURL();
+            });
+        }
     }
 
     loadPreset(pattern) {
@@ -696,7 +764,8 @@ class Game {
         this.wavePhase = 'playing';
         this.gameOver = false;
         this.defenderLowHP = false;
-        this.defenderStunned = 0;
+        this.isBossWave = false;
+        this.bossDefeatedText = 0;
         
         // Reset upgrades
         this.upgrades = {};
@@ -717,14 +786,6 @@ class Game {
         this.defenderSmokeParticles = [];
         this.powerUps = [];
         this.activePowerUps = { shield: 0, speedBoost: 0, rapidFire: 0, spreadShot: 0 };
-        
-        // Reset grid to 3 rows (don't keep extra rows from previous game)
-        if (this.gridRows > 3) {
-            this.gridRows = 3;
-            this.grid = this.grid.slice(0, 3);
-            this.beatFlash = this.beatFlash.slice(0, 3);
-            this.drumMachine.soundOrder = [0, 1, 2];
-        }
         
         // Reset AI for wave 1
         this.updateAIForWave();
@@ -766,6 +827,9 @@ class Game {
         this.currentWave++;
         this.updateAIForWave();
         
+        // Check if next wave is boss
+        this.isBossWave = (this.currentWave % 5 === 0);
+        
         // Transition to prepare phase
         this.wavePhase = 'prepare';
         this.phaseTimer = 0;
@@ -797,6 +861,7 @@ class Game {
             case 'alienArmor':
                 // Apply to all current aliens
                 for (const alien of this.aliens) {
+                    if (!alien) continue;
                     if (!alien.hp) alien.hp = 2;
                 }
                 this.createPopup(this.canvas.width/2, this.canvas.height/2, 'ALIEN ARMOR!', '#4444ff');
@@ -811,22 +876,19 @@ class Game {
                 break;
                 
             case 'extraRow':
-                // Add 4th or 5th row incrementally
-                if (this.gridRows < 5) {
-                    this.gridRows++;
+                // Add 4th row
+                if (this.gridRows === 3) {
+                    this.gridRows = 4;
                     this.grid.push(Array(this.gridCols).fill(false));
                     this.beatFlash.push(Array(this.gridCols).fill(0));
-                    
-                    if (this.gridRows === 4) {
-                        this.drumMachine.soundOrder.push(3); // Tom sound (index 3)
-                        this.createPopup(this.canvas.width/2, this.canvas.height/2, 'TOM ROW ADDED!', '#00ffff');
-                    } else if (this.gridRows === 5) {
-                        this.drumMachine.soundOrder.push(4); // Cymbal sound (index 4)
-                        this.createPopup(this.canvas.width/2, this.canvas.height/2, 'CYMBAL ROW ADDED!', '#ffd700');
-                    }
-                } else {
-                    this.createPopup(this.canvas.width/2, this.canvas.height/2, 'MAX ROWS!', '#ff0000');
+                    this.drumMachine.soundOrder.push(1); // Reuse snare for 4th row
+                    this.instrumentColors.push({
+                        primary: '#00ffff',
+                        secondary: '#00aaaa',
+                        name: 'Cyan'
+                    });
                 }
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'EXTRA ROW!', '#00ffff');
                 break;
                 
             case 'tempoPush':
@@ -935,46 +997,46 @@ class Game {
             this.shotDelay = 1500;
             this.aiAccuracy = 0.3;
             this.aiShotsPerTurn = 1;
+            this.defenderMaxHP = 60;
         } else if (this.currentWave <= 2) {
             this.shotDelay = 1200;
             this.aiAccuracy = 0.4;
             this.aiShotsPerTurn = 1;
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
         } else if (this.currentWave === 3) {
             this.shotDelay = 900;
             this.aiAccuracy = 0.5;
             this.aiShotsPerTurn = 1;
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
         } else if (this.currentWave === 4) {
             this.shotDelay = 600;
             this.aiAccuracy = 0.65;
             this.aiShotsPerTurn = 1;
-        } else if (this.currentWave === 5) {
-            this.shotDelay = 500;
-            this.aiAccuracy = 0.7;
-            this.aiShotsPerTurn = 2; // Double shot!
-        } else if (this.currentWave === 6) {
-            this.shotDelay = 450;
-            this.aiAccuracy = 0.75;
-            this.aiShotsPerTurn = 2;
-        } else if (this.currentWave === 7) {
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
+        } else if (this.currentWave % 5 === 0) {
+            // BOSS WAVE
             this.shotDelay = 400;
             this.aiAccuracy = 0.8;
             this.aiShotsPerTurn = 2;
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
+            this.defender.speed = Math.min(12, this.defender.speed + 2);
+            this.bossShieldTimer = 20 * 60; // 20 seconds
+            this.bossMissileTimer = 30 * 60; // 30 seconds
         } else if (this.currentWave >= 10) {
             // Berserk mode
             this.shotDelay = 200;
             this.aiAccuracy = 0.9;
             this.aiShotsPerTurn = 3; // Triple shot!
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
         } else {
             this.shotDelay = 350;
             this.aiAccuracy = 0.85;
             this.aiShotsPerTurn = 2;
+            this.defenderMaxHP = 60 + ((this.currentWave - 1) * 15);
         }
     }
 
     moveDefender(direction) {
-        // Can't move if stunned
-        if (this.defenderStunned > 0) return;
-        
         const newX = this.defender.x + direction * this.defender.speed;
         if (newX >= 0 && newX <= this.canvas.width - this.defender.width) {
             this.defender.x = newX;
@@ -994,6 +1056,7 @@ class Game {
         const zoneWidth = this.canvas.width / 16;
         
         for (const proj of this.alienProjectiles) {
+            if (!proj) continue;
             const timeToImpact = (this.defender.y - proj.y) / proj.speed;
             if (timeToImpact > 0 && timeToImpact < 50) {
                 const zone = Math.floor(proj.x / zoneWidth);
@@ -1043,7 +1106,7 @@ class Game {
             let minDistance = Infinity;
 
             for (const alien of this.aliens) {
-                if (!alien.alive) continue;
+                if (!alien || !alien.alive) continue;
                 const distance = Math.abs(alien.x - defenderCenter);
                 if (distance < minDistance) {
                     minDistance = distance;
@@ -1065,7 +1128,7 @@ class Game {
         const currentTime = Date.now();
         const effectiveShotDelay = this.activePowerUps.rapidFire > 0 ? this.shotDelay / 2 : this.shotDelay;
         if (currentTime - this.lastShotTime >= effectiveShotDelay) {
-            const aliveAliens = this.aliens.filter(a => a.alive);
+            const aliveAliens = this.aliens.filter(a => a && a.alive);
             if (aliveAliens.length > 0 && Math.random() < this.aiAccuracy) {
                 for (let i = 0; i < this.aiShotsPerTurn; i++) {
                     this.shoot();
@@ -1080,6 +1143,7 @@ class Game {
             let minDist = Infinity;
             
             for (const powerUp of this.powerUps) {
+                if (!powerUp) continue;
                 const dist = Math.abs(powerUp.x - defenderCenter);
                 if (dist < minDist && powerUp.y > this.defender.y - 100) {
                     minDist = dist;
@@ -1090,6 +1154,46 @@ class Game {
             if (nearestPowerUp && minDist < 150) {
                 const powerUpDir = nearestPowerUp.x > defenderCenter ? 1 : -1;
                 if (moveDir === 0) moveDir = powerUpDir;
+            }
+        }
+        
+        // BOSS AI - special attacks
+        if (this.isBossWave && this.defenderHP > 0) {
+            // Shield bubble every 20 seconds
+            if (this.bossShieldTimer) {
+                this.bossShieldTimer--;
+                if (this.bossShieldTimer === 0) {
+                    this.bossShield = 3;
+                    this.createPopup(this.canvas.width / 2, this.canvas.height - 100, 'BOSS SHIELD!', '#ffff00');
+                    this.bossShieldTimer = 20 * 60; // Reset
+                }
+            }
+            
+            // Missile barrage every 30 seconds
+            if (this.bossMissileTimer) {
+                this.bossMissileTimer--;
+                if (this.bossMissileTimer === 0) {
+                    // Fire 5 missiles in spread pattern
+                    for (let i = 0; i < 5; i++) {
+                        const spreadX = (this.canvas.width / 6) * (i + 0.5);
+                        this.alienProjectiles.push({
+                            type: 'homing',
+                            x: spreadX,
+                            y: this.gridYOffset + this.gridRows * this.cellHeight,
+                            width: 8,
+                            height: 12,
+                            speed: 3,
+                            damage: 15,
+                            color: '#ffff00',
+                            row: 0,
+                            aliensOnStep: 1,
+                            trail: []
+                        });
+                    }
+                    this.createPopup(this.canvas.width / 2, this.gridYOffset + this.gridRows * this.cellHeight + 20, 'MISSILE BARRAGE!', '#ff0000');
+                    this.addShake(15);
+                    this.bossMissileTimer = 30 * 60; // Reset
+                }
             }
         }
     }
@@ -1127,6 +1231,8 @@ class Game {
     }
 
     collectPowerUp(powerUp) {
+        if (!powerUp) return;
+        
         switch (powerUp.type) {
             case 'repair':
                 this.defenderHP = Math.min(this.defenderHP + 10, this.defenderMaxHP);
@@ -1271,9 +1377,11 @@ class Game {
     }
 
     alienShoot(alien) {
+        if (!alien) return;
+        
         // Count aliens on same column
         const aliensOnStep = this.aliens.filter(a => 
-            a.col === alien.col && a.alive
+            a && a.col === alien.col && a.alive
         ).length;
         
         const colors = this.instrumentColors[alien.row];
@@ -1287,15 +1395,18 @@ class Game {
             if (aliensOnStep === 2) baseDamage = 15;
             if (aliensOnStep === 3) baseDamage = 18;
             
+            // Boss damage boost
+            if (this.isBossWave) baseDamage = Math.floor(baseDamage * 1.5);
+            
             this.alienProjectiles.push({
                 type: 'cannon',
                 x: alien.x,
                 y: alien.y,
                 width: 16,
                 height: 16,
-                speed: 2 * speedMultiplier,
+                speed: 2 * speedMultiplier * (this.isBossWave ? 1.3 : 1),
                 damage: baseDamage,
-                color: colors.primary,
+                color: this.isBossWave ? '#ffff00' : colors.primary,
                 row: alien.row,
                 aliensOnStep,
                 trail: []
@@ -1304,6 +1415,7 @@ class Game {
             // Snare — Burst Fire (3 bullets with slight spread)
             let bulletDamage = 3;
             if (aliensOnStep >= 2) bulletDamage = 4;
+            if (this.isBossWave) bulletDamage = Math.floor(bulletDamage * 1.5);
             
             for (let i = 0; i < 3; i++) {
                 const spread = (i - 1) * 8; // -8, 0, +8 pixels
@@ -1313,9 +1425,9 @@ class Game {
                     y: alien.y - (i * 6), // stagger vertically so they arrive at different times
                     width: 6,
                     height: 10,
-                    speed: (4 + (i * 0.5)) * speedMultiplier,
+                    speed: (4 + (i * 0.5)) * speedMultiplier * (this.isBossWave ? 1.3 : 1),
                     damage: bulletDamage,
-                    color: colors.primary,
+                    color: this.isBossWave ? '#ffff00' : colors.primary,
                     row: alien.row,
                     aliensOnStep
                 });
@@ -1325,6 +1437,7 @@ class Game {
             let homingDamage = 6;
             if (aliensOnStep === 2) homingDamage = 8;
             if (aliensOnStep === 3) homingDamage = 10;
+            if (this.isBossWave) homingDamage = Math.floor(homingDamage * 1.5);
             
             this.alienProjectiles.push({
                 type: 'homing',
@@ -1332,53 +1445,34 @@ class Game {
                 y: alien.y,
                 width: 8,
                 height: 12,
-                speed: 3 * speedMultiplier,
+                speed: 3 * speedMultiplier * (this.isBossWave ? 1.3 : 1),
                 damage: homingDamage,
-                color: colors.primary,
+                color: this.isBossWave ? '#ffff00' : colors.primary,
                 row: alien.row,
                 aliensOnStep,
                 trail: []
             });
         } else if (alien.row === 3) {
-            // Tom/Perc — Scatter Shot (5 projectiles in wide fan -30° to +30°)
-            let scatterDamage = 2; // Each projectile deals 2 damage
+            // 4th row (Cyan/Extra Row) — same as snare burst
+            let bulletDamage = 3;
+            if (aliensOnStep >= 2) bulletDamage = 4;
+            if (this.isBossWave) bulletDamage = Math.floor(bulletDamage * 1.5);
             
-            const angles = [-30, -15, 0, 15, 30]; // degrees
-            for (let i = 0; i < 5; i++) {
-                const angle = angles[i];
-                const radians = (angle * Math.PI) / 180;
-                const speed = 4 * speedMultiplier;
-                
+            for (let i = 0; i < 3; i++) {
+                const spread = (i - 1) * 8;
                 this.alienProjectiles.push({
-                    type: 'scatter',
-                    x: alien.x,
-                    y: alien.y,
-                    vx: Math.sin(radians) * speed,
-                    vy: Math.cos(radians) * speed, // positive = downward
-                    width: 4,
-                    height: 8,
-                    speed: speed,
-                    damage: scatterDamage,
-                    color: colors.primary,
+                    type: 'burst',
+                    x: alien.x + spread,
+                    y: alien.y - (i * 6),
+                    width: 6,
+                    height: 10,
+                    speed: (4 + (i * 0.5)) * speedMultiplier * (this.isBossWave ? 1.3 : 1),
+                    damage: bulletDamage,
+                    color: this.isBossWave ? '#ffff00' : colors.primary,
                     row: alien.row,
                     aliensOnStep
                 });
             }
-        } else if (alien.row === 4) {
-            // Cymbal/FX — EMP Pulse (expanding ring stun)
-            this.alienProjectiles.push({
-                type: 'emp',
-                x: alien.x,
-                y: alien.y,
-                width: 0, // starts at 0, expands
-                speed: 2 * speedMultiplier, // expansion speed (downward drift)
-                damage: 0, // doesn't damage directly, only stuns
-                color: colors.primary,
-                row: alien.row,
-                aliensOnStep,
-                radius: 0, // current ring radius
-                maxRadius: 80 // max expansion radius
-            });
         }
         
         // Muzzle flash
@@ -1392,6 +1486,16 @@ class Game {
         if (this.freezeFrames > 0) {
             this.freezeFrames--;
             return;
+        }
+        
+        // Update toast
+        if (this.toast && this.toast.life > 0) {
+            this.toast.life--;
+        }
+        
+        // Update boss defeated text
+        if (this.bossDefeatedText > 0) {
+            this.bossDefeatedText--;
         }
 
         // Handle wave phase transitions
@@ -1413,6 +1517,7 @@ class Game {
             if (this.phaseTimer >= 120) { // 2 seconds
                 this.currentWave++;
                 this.updateAIForWave();
+                this.isBossWave = (this.currentWave % 5 === 0);
                 this.wavePhase = 'prepare';
                 this.phaseTimer = 0;
                 this.respawnAliens();
@@ -1429,6 +1534,10 @@ class Game {
         // Update fire zones (Napalm Rounds)
         for (let i = this.fireZones.length - 1; i >= 0; i--) {
             const zone = this.fireZones[i];
+            if (!zone) {
+                this.fireZones.splice(i, 1);
+                continue;
+            }
             zone.life--;
             
             // Check if defender is in fire zone
@@ -1464,7 +1573,7 @@ class Game {
         }
 
         // Calculate intensity
-        const totalBeats = this.aliens.filter(a => a.alive).length;
+        const totalBeats = this.aliens.filter(a => a && a.alive).length;
         this.intensity = totalBeats / (this.gridRows * this.gridCols);
 
         // Update screen shake
@@ -1481,6 +1590,7 @@ class Game {
         // Update starfield
         const starSpeed = 0.5 + (this.bpm / 120) * 0.5 + this.intensity * 2;
         for (const star of this.stars) {
+            if (!star) continue;
             star.y += star.speed * starSpeed;
             if (star.y > this.canvas.height) {
                 star.y = 0;
@@ -1495,11 +1605,6 @@ class Game {
         // Update defender damage flash
         if (this.defenderDamageFlash > 0) {
             this.defenderDamageFlash -= 0.05;
-        }
-        
-        // Update defender stun
-        if (this.defenderStunned > 0) {
-            this.defenderStunned--;
         }
 
         // Update defender smoke when low HP
@@ -1519,6 +1624,10 @@ class Game {
         // Update smoke particles
         for (let i = this.defenderSmokeParticles.length - 1; i >= 0; i--) {
             const p = this.defenderSmokeParticles[i];
+            if (!p) {
+                this.defenderSmokeParticles.splice(i, 1);
+                continue;
+            }
             p.x += p.vx;
             p.y += p.vy;
             p.life--;
@@ -1530,7 +1639,12 @@ class Game {
         // Update bullets (defender shooting aliens)
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const bullet = this.bullets[i];
+            if (!bullet) {
+                this.bullets.splice(i, 1);
+                continue;
+            }
             
+            if (!bullet.trail) bullet.trail = [];
             bullet.trail.push({ x: bullet.x, y: bullet.y });
             if (bullet.trail.length > 5) bullet.trail.shift();
             
@@ -1545,6 +1659,7 @@ class Game {
             let hitAlien = false;
             for (let j = 0; j < this.aliens.length; j++) {
                 const alien = this.aliens[j];
+                if (!alien) continue;
                 if (alien.alive && this.checkCollision(bullet, alien)) {
                     // Decrement alien HP
                     if (!alien.hp) alien.hp = 1; // Backwards compatibility
@@ -1586,6 +1701,10 @@ class Game {
         // Update alien projectiles
         for (let i = this.alienProjectiles.length - 1; i >= 0; i--) {
             const proj = this.alienProjectiles[i];
+            if (!proj) {
+                this.alienProjectiles.splice(i, 1);
+                continue;
+            }
             
             // Handle different projectile behaviors
             if (proj.type === 'homing') {
@@ -1604,52 +1723,9 @@ class Game {
                 if (!proj.trail) proj.trail = [];
                 proj.trail.push({ x: proj.x, y: proj.y });
                 if (proj.trail.length > 6) proj.trail.shift();
-            } else if (proj.type === 'scatter') {
-                // Scatter shot — moves in angled direction
-                proj.x += proj.vx;
-                proj.y += proj.vy;
-                
-                // Remove if off-screen
-                if (proj.x < 0 || proj.x > this.canvas.width) {
-                    this.alienProjectiles.splice(i, 1);
-                    continue;
-                }
-            } else if (proj.type === 'emp') {
-                // EMP pulse — expands outward
-                proj.radius += 3; // expansion rate
-                proj.y += proj.speed; // drifts down slowly
-                
-                // Check if ring reaches defender's Y level
-                const defenderCenterY = this.defender.y + this.defender.height / 2;
-                if (Math.abs(proj.y - defenderCenterY) < 10 && proj.radius > 20) {
-                    const defenderCenterX = this.defender.x + this.defender.width / 2;
-                    const dist = Math.abs(proj.x - defenderCenterX);
-                    
-                    // Check if defender is within ring radius
-                    if (dist < proj.radius && dist > proj.radius - 15) {
-                        // Stun defender for 0.5 seconds (30 frames at 60fps)
-                        this.defenderStunned = 30;
-                        this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 'STUNNED!', '#ffd700');
-                        this.addShake(5);
-                    }
-                }
-                
-                // Remove if too large or off-screen
-                if (proj.radius > proj.maxRadius || proj.y > this.canvas.height + 100) {
-                    this.alienProjectiles.splice(i, 1);
-                    continue;
-                }
             }
             
-            // Move projectile downward (except scatter which uses vx/vy, and emp which has custom movement)
-            if (proj.type !== 'scatter' && proj.type !== 'emp') {
-                proj.y += proj.speed;
-            }
-            
-            // Skip collision for EMP (it handles its own collision above)
-            if (proj.type === 'emp') {
-                continue;
-            }
+            proj.y += proj.speed;
             
             // Check direct collision with defender
             let hitDefender = false;
@@ -1678,7 +1754,17 @@ class Game {
             }
             
             if (hitDefender) {
-                // Check shield first
+                // Check boss shield first
+                if (this.isBossWave && this.bossShield > 0) {
+                    this.bossShield--;
+                    this.createPopup(this.canvas.width / 2, this.canvas.height - 100, 
+                        `BOSS SHIELD: ${this.bossShield}`, '#ffff00');
+                    this.createExplosion(proj.x, proj.y, false);
+                    this.alienProjectiles.splice(i, 1);
+                    continue;
+                }
+                
+                // Check shield power-up
                 if (this.activePowerUps.shield > 0) {
                     this.activePowerUps.shield--;
                     this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, 
@@ -1761,6 +1847,10 @@ class Game {
         // Update debris
         for (let i = this.debris.length - 1; i >= 0; i--) {
             const d = this.debris[i];
+            if (!d) {
+                this.debris.splice(i, 1);
+                continue;
+            }
             d.x += d.vx;
             d.y += d.vy;
             d.vy += 0.3;
@@ -1785,6 +1875,10 @@ class Game {
         // Update popups
         for (let i = this.popups.length - 1; i >= 0; i--) {
             const p = this.popups[i];
+            if (!p) {
+                this.popups.splice(i, 1);
+                continue;
+            }
             p.y += p.vy;
             p.life--;
             if (p.life <= 0) {
@@ -1794,8 +1888,13 @@ class Game {
 
         // Update muzzle flashes
         for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-            this.muzzleFlashes[i].life--;
-            if (this.muzzleFlashes[i].life <= 0) {
+            const flash = this.muzzleFlashes[i];
+            if (!flash) {
+                this.muzzleFlashes.splice(i, 1);
+                continue;
+            }
+            flash.life--;
+            if (flash.life <= 0) {
                 this.muzzleFlashes.splice(i, 1);
             }
         }
@@ -1803,6 +1902,10 @@ class Game {
         // Update power-ups
         for (let i = this.powerUps.length - 1; i >= 0; i--) {
             const powerUp = this.powerUps[i];
+            if (!powerUp) {
+                this.powerUps.splice(i, 1);
+                continue;
+            }
             powerUp.y += powerUp.speed;
             powerUp.pulse = (powerUp.pulse + 0.1) % (Math.PI * 2);
             
@@ -1862,8 +1965,8 @@ class Game {
             
             // Play sounds and aliens shoot
             for (let row = 0; row < this.gridRows; row++) {
-                if (this.grid[row][this.currentStep]) {
-                    const alien = this.aliens.find(a => a.row === row && a.col === this.currentStep && a.alive);
+                if (this.grid[row] && this.grid[row][this.currentStep]) {
+                    const alien = this.aliens.find(a => a && a.row === row && a.col === this.currentStep && a.alive);
                     if (alien) {
                         this.drumMachine.playSound(row);
                         this.beatFlash[row][this.currentStep] = 1.0;
@@ -1881,6 +1984,7 @@ class Game {
                         this.addShake(shakeIntensities[row]);
                         
                         this.stars.forEach(star => {
+                            if (!star) return;
                             if (Math.random() < 0.3) star.pulse = 1.0;
                         });
                     }
@@ -1891,6 +1995,7 @@ class Game {
         // Update alien respawn counters (Quick Respawn upgrade)
         if (this.upgrades.quickRespawn) {
             for (const alien of this.aliens) {
+                if (!alien) continue;
                 if (!alien.alive && alien.respawnIn !== undefined) {
                     alien.respawnIn--;
                     if (alien.respawnIn <= 0) {
@@ -1906,6 +2011,7 @@ class Game {
         
         // Decay alien hit flash
         for (const alien of this.aliens) {
+            if (!alien) continue;
             if (alien.hitFlash && alien.hitFlash > 0) {
                 alien.hitFlash--;
             }
@@ -1914,7 +2020,7 @@ class Game {
         // Decay beat flash and pulse
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
-                if (this.beatFlash[row][col] > 0) {
+                if (this.beatFlash[row] && this.beatFlash[row][col] > 0) {
                     this.beatFlash[row][col] -= 0.05;
                 }
             }
@@ -1926,6 +2032,10 @@ class Game {
         // Update particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
+            if (!p) {
+                this.particles.splice(i, 1);
+                continue;
+            }
             p.x += p.vx;
             p.y += p.vy;
             p.vy += 0.2;
@@ -1942,10 +2052,23 @@ class Game {
 
     waveComplete() {
         // Defender destroyed - player wins wave
-        this.score += this.currentWave * 500; // Wave completion bonus
+        const waveBonus = this.currentWave * 500;
+        const bossBonus = this.isBossWave ? this.currentWave * 1000 : 0;
+        this.score += waveBonus + bossBonus;
+        
+        if (this.isBossWave) {
+            this.bossDefeatedText = 180; // 3 seconds
+            this.createPopup(this.canvas.width / 2, this.canvas.height / 2, 
+                `BOSS DEFEATED! +${bossBonus}`, '#ffff00');
+            this.addShake(30);
+        }
+        
         this.defenderMaxHP = 60 + (this.currentWave * 15); // More HP each wave
         this.defenderHP = this.defenderMaxHP; // Reset HP for next wave
         this.defenderLowHP = false;
+        
+        // Save high scores
+        this.saveHighScores();
         
         // Show card selection
         this.currentCardChoices = this.generateCardChoices();
@@ -1961,6 +2084,7 @@ class Game {
         // All aliens destroyed or wave loops completed with defender alive
         this.wavePhase = 'gameover';
         this.gameOver = true;
+        this.saveHighScores();
     }
 
     createSoundParticles(x, y, row) {
@@ -2004,6 +2128,7 @@ class Game {
     }
 
     checkCollision(bullet, alien) {
+        if (!bullet || !alien) return false;
         const alienSize = 30;
         return bullet.x >= alien.x - alienSize/2 &&
                bullet.x <= alien.x + alienSize/2 &&
@@ -2021,6 +2146,7 @@ class Game {
 
         // Draw starfield
         for (const star of this.stars) {
+            if (!star) continue;
             const brightness = star.brightness + star.pulse * 0.5;
             this.ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
             this.ctx.beginPath();
@@ -2031,7 +2157,7 @@ class Game {
         // Draw beat column flash
         if (this.stepPulse > 0 && this.wavePhase === 'playing') {
             for (let row = 0; row < this.gridRows; row++) {
-                if (this.grid[row][this.currentStep]) {
+                if (this.grid[row] && this.grid[row][this.currentStep]) {
                     const colors = this.instrumentColors[row];
                     const gradient = this.ctx.createLinearGradient(
                         this.currentStep * this.cellWidth,
@@ -2058,7 +2184,7 @@ class Game {
         // Draw grid
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
-                const flashIntensity = this.beatFlash[row][col];
+                const flashIntensity = this.beatFlash[row] && this.beatFlash[row][col] ? this.beatFlash[row][col] : 0;
                 
                 if (flashIntensity > 0) {
                     const colors = this.instrumentColors[row];
@@ -2108,116 +2234,135 @@ class Game {
 
         // Draw aliens
         for (const alien of this.aliens) {
-            if (alien.alive) {
-                const colors = this.instrumentColors[alien.row];
+            if (!alien || !alien.alive) continue;
+            
+            const colors = this.instrumentColors[alien.row];
+            
+            // Boss transformation
+            let alienScale = 1;
+            let alienColor = colors.primary;
+            let alienStroke = colors.secondary;
+            
+            if (this.isBossWave) {
+                alienScale = 2;
+                alienColor = '#ffff00';
+                alienStroke = '#ffaa00';
                 
-                // Hit flash effect - flash white when hit
-                if (alien.hitFlash && alien.hitFlash > 0) {
-                    this.ctx.fillStyle = '#ffffff';
-                    this.ctx.strokeStyle = '#ffffff';
-                } else {
-                    this.ctx.fillStyle = colors.primary;
-                    this.ctx.strokeStyle = colors.secondary;
-                }
-                this.ctx.lineWidth = 2;
+                // Boss aura/glow
+                this.ctx.globalAlpha = 0.3;
+                this.ctx.fillStyle = '#ffff00';
+                this.ctx.shadowBlur = 20;
+                this.ctx.shadowColor = '#ffff00';
+                this.ctx.beginPath();
+                this.ctx.arc(alien.x, alien.y, 35, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.shadowBlur = 0;
+                this.ctx.globalAlpha = 1;
+            }
+            
+            // Hit flash effect - flash white when hit
+            if (alien.hitFlash && alien.hitFlash > 0) {
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.strokeStyle = '#ffffff';
+            } else {
+                this.ctx.fillStyle = alienColor;
+                this.ctx.strokeStyle = alienStroke;
+            }
+            this.ctx.lineWidth = 2;
+            
+            this.ctx.save();
+            this.ctx.translate(alien.x, alien.y);
+            this.ctx.scale(alienScale, alienScale);
+            this.ctx.translate(-alien.x, -alien.y);
+            
+            switch(alien.row) {
+                case 0: // Bass
+                    this.ctx.fillRect(alien.x - 20, alien.y - 8, 40, 16);
+                    this.ctx.strokeRect(alien.x - 20, alien.y - 8, 40, 16);
+                    this.ctx.fillRect(alien.x - 10, alien.y - 12, 20, 8);
+                    this.ctx.strokeRect(alien.x - 10, alien.y - 12, 20, 8);
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(alien.x - 20, alien.y);
+                    this.ctx.lineTo(alien.x - 25, alien.y + 5);
+                    this.ctx.lineTo(alien.x - 20, alien.y + 5);
+                    this.ctx.fill();
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(alien.x + 20, alien.y);
+                    this.ctx.lineTo(alien.x + 25, alien.y + 5);
+                    this.ctx.lineTo(alien.x + 20, alien.y + 5);
+                    this.ctx.fill();
+                    break;
+                    
+                case 1: // Snare
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(alien.x, alien.y - 15);
+                    this.ctx.lineTo(alien.x + 15, alien.y + 5);
+                    this.ctx.lineTo(alien.x - 15, alien.y + 5);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    this.ctx.beginPath();
+                    this.ctx.arc(alien.x, alien.y - 5, 5, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    break;
+                    
+                case 2: // Hi-hat
+                    this.ctx.beginPath();
+                    this.ctx.ellipse(alien.x, alien.y, 20, 8, 0, 0, Math.PI * 2);
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    this.ctx.beginPath();
+                    this.ctx.ellipse(alien.x, alien.y - 5, 10, 10, 0, Math.PI, 0);
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    break;
+                    
+                case 3: // Cyan (Extra Row)
+                    // Draw a diamond shape
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(alien.x, alien.y - 12);
+                    this.ctx.lineTo(alien.x + 12, alien.y);
+                    this.ctx.lineTo(alien.x, alien.y + 12);
+                    this.ctx.lineTo(alien.x - 12, alien.y);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                    break;
+            }
+            
+            this.ctx.restore();
+            this.ctx.lineWidth = 1;
+            
+            // Boss name tag
+            if (this.isBossWave) {
+                this.ctx.fillStyle = '#ffff00';
+                this.ctx.font = 'bold 12px "Courier New"';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('COMMANDER', alien.x, alien.y - 50);
+                this.ctx.textAlign = 'left';
+            }
+            
+            // Draw HP bar if alien has more than 1 HP
+            if (alien.maxHp && alien.maxHp > 1) {
+                const hpBarWidth = 30;
+                const hpBarHeight = 4;
+                const hpBarX = alien.x - hpBarWidth/2;
+                const hpBarY = alien.y - 25;
                 
-                switch(alien.row) {
-                    case 0: // Bass
-                        this.ctx.fillRect(alien.x - 20, alien.y - 8, 40, 16);
-                        this.ctx.strokeRect(alien.x - 20, alien.y - 8, 40, 16);
-                        this.ctx.fillRect(alien.x - 10, alien.y - 12, 20, 8);
-                        this.ctx.strokeRect(alien.x - 10, alien.y - 12, 20, 8);
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(alien.x - 20, alien.y);
-                        this.ctx.lineTo(alien.x - 25, alien.y + 5);
-                        this.ctx.lineTo(alien.x - 20, alien.y + 5);
-                        this.ctx.fill();
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(alien.x + 20, alien.y);
-                        this.ctx.lineTo(alien.x + 25, alien.y + 5);
-                        this.ctx.lineTo(alien.x + 20, alien.y + 5);
-                        this.ctx.fill();
-                        break;
-                        
-                    case 1: // Snare
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(alien.x, alien.y - 15);
-                        this.ctx.lineTo(alien.x + 15, alien.y + 5);
-                        this.ctx.lineTo(alien.x - 15, alien.y + 5);
-                        this.ctx.closePath();
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        this.ctx.beginPath();
-                        this.ctx.arc(alien.x, alien.y - 5, 5, 0, Math.PI * 2);
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        break;
-                        
-                    case 2: // Hi-hat
-                        this.ctx.beginPath();
-                        this.ctx.ellipse(alien.x, alien.y, 20, 8, 0, 0, Math.PI * 2);
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        this.ctx.beginPath();
-                        this.ctx.ellipse(alien.x, alien.y - 5, 10, 10, 0, Math.PI, 0);
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        break;
-                        
-                    case 3: // Tom/Perc - Diamond shape
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(alien.x, alien.y - 12);
-                        this.ctx.lineTo(alien.x + 12, alien.y);
-                        this.ctx.lineTo(alien.x, alien.y + 12);
-                        this.ctx.lineTo(alien.x - 12, alien.y);
-                        this.ctx.closePath();
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        break;
-                        
-                    case 4: // Cymbal/FX - Star shape (5-pointed)
-                        this.ctx.beginPath();
-                        const starPoints = 5;
-                        const outerRadius = 15;
-                        const innerRadius = 6;
-                        for (let p = 0; p < starPoints * 2; p++) {
-                            const angle = (Math.PI * 2 * p) / (starPoints * 2) - Math.PI / 2;
-                            const radius = p % 2 === 0 ? outerRadius : innerRadius;
-                            const px = alien.x + Math.cos(angle) * radius;
-                            const py = alien.y + Math.sin(angle) * radius;
-                            if (p === 0) {
-                                this.ctx.moveTo(px, py);
-                            } else {
-                                this.ctx.lineTo(px, py);
-                            }
-                        }
-                        this.ctx.closePath();
-                        this.ctx.fill();
-                        this.ctx.stroke();
-                        break;
-                }
+                this.ctx.strokeStyle = '#ffffff';
                 this.ctx.lineWidth = 1;
+                this.ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
                 
-                // Draw HP bar if alien has more than 1 HP
-                if (alien.maxHp && alien.maxHp > 1) {
-                    const hpBarWidth = 30;
-                    const hpBarHeight = 4;
-                    const hpBarX = alien.x - hpBarWidth/2;
-                    const hpBarY = alien.y - 25;
-                    
-                    this.ctx.strokeStyle = '#ffffff';
-                    this.ctx.lineWidth = 1;
-                    this.ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
-                    
-                    const hpPercent = (alien.hp || 1) / alien.maxHp;
-                    this.ctx.fillStyle = hpPercent > 0.5 ? '#00ff00' : '#ff0000';
-                    this.ctx.fillRect(hpBarX + 1, hpBarY + 1, (hpBarWidth - 2) * hpPercent, hpBarHeight - 2);
-                }
+                const hpPercent = (alien.hp || 1) / alien.maxHp;
+                this.ctx.fillStyle = hpPercent > 0.5 ? '#00ff00' : '#ff0000';
+                this.ctx.fillRect(hpBarX + 1, hpBarY + 1, (hpBarWidth - 2) * hpPercent, hpBarHeight - 2);
             }
         }
 
         // Draw muzzle flashes
         for (const flash of this.muzzleFlashes) {
+            if (!flash) continue;
             const alpha = flash.life / 8;
             this.ctx.globalAlpha = alpha;
             this.ctx.fillStyle = flash.color;
@@ -2232,28 +2377,7 @@ class Game {
 
         // Draw defender
         const defenderFlash = this.defenderDamageFlash > 0;
-        const defenderStunned = this.defenderStunned > 0;
-        this.ctx.fillStyle = defenderFlash ? '#ff0000' : (defenderStunned ? '#8888ff' : '#00ff00');
-        
-        // Stun visual — yellow electric sparks
-        if (defenderStunned) {
-            for (let s = 0; s < 5; s++) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 20 + Math.random() * 10;
-                const sparkX = this.defender.x + this.defender.width/2 + Math.cos(angle) * dist;
-                const sparkY = this.defender.y + this.defender.height/2 + Math.sin(angle) * dist;
-                
-                this.ctx.strokeStyle = '#ffd700';
-                this.ctx.lineWidth = 2;
-                this.ctx.globalAlpha = 0.7;
-                this.ctx.beginPath();
-                this.ctx.moveTo(this.defender.x + this.defender.width/2, this.defender.y + this.defender.height/2);
-                this.ctx.lineTo(sparkX, sparkY);
-                this.ctx.stroke();
-            }
-            this.ctx.globalAlpha = 1;
-            this.ctx.lineWidth = 1;
-        }
+        this.ctx.fillStyle = defenderFlash ? '#ff0000' : '#00ff00';
         
         // Shield visual — blue pulsing ring
         if (this.activePowerUps.shield > 0) {
@@ -2266,6 +2390,25 @@ class Game {
                 this.defender.x + this.defender.width / 2,
                 this.defender.y + this.defender.height / 2,
                 30,
+                0,
+                Math.PI * 2
+            );
+            this.ctx.stroke();
+            this.ctx.globalAlpha = 1;
+            this.ctx.lineWidth = 1;
+        }
+        
+        // Boss shield visual — yellow barrier
+        if (this.isBossWave && this.bossShield > 0) {
+            const shieldPulse = Math.sin(Date.now() / 150) * 0.4 + 0.6;
+            this.ctx.strokeStyle = '#ffff00';
+            this.ctx.lineWidth = 4;
+            this.ctx.globalAlpha = shieldPulse * 0.8;
+            this.ctx.beginPath();
+            this.ctx.arc(
+                this.canvas.width / 2,
+                this.gridYOffset + this.gridRows * this.cellHeight / 2,
+                100,
                 0,
                 Math.PI * 2
             );
@@ -2293,6 +2436,7 @@ class Game {
         
         // Smoke particles
         for (const p of this.defenderSmokeParticles) {
+            if (!p) continue;
             const alpha = p.life / 60;
             this.ctx.globalAlpha = alpha * 0.5;
             this.ctx.fillStyle = '#888888';
@@ -2364,6 +2508,7 @@ class Game {
 
         // Draw fire zones (Napalm Rounds)
         for (const zone of this.fireZones) {
+            if (!zone) continue;
             const alpha = zone.life / 180;
             const flicker = Math.sin(Date.now() / 50) * 0.3 + 0.7;
             
@@ -2381,6 +2526,7 @@ class Game {
 
         // Draw power-ups
         for (const powerUp of this.powerUps) {
+            if (!powerUp) continue;
             const pulse = Math.sin(powerUp.pulse) * 0.3 + 1;
             
             // Glow effect
@@ -2412,14 +2558,17 @@ class Game {
 
         // Draw bullets
         for (const bullet of this.bullets) {
-            for (let i = 0; i < bullet.trail.length; i++) {
-                const t = bullet.trail[i];
-                if (!t || t.x === undefined) continue;
-                const alpha = (i + 1) / bullet.trail.length * 0.5;
-                this.ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
-                this.ctx.beginPath();
-                this.ctx.arc(t.x, t.y, bullet.width / 2, 0, Math.PI * 2);
-                this.ctx.fill();
+            if (!bullet) continue;
+            if (bullet.trail) {
+                for (let i = 0; i < bullet.trail.length; i++) {
+                    const t = bullet.trail[i];
+                    if (!t || t.x === undefined) continue;
+                    const alpha = (i + 1) / bullet.trail.length * 0.5;
+                    this.ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(t.x, t.y, bullet.width / 2, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
             }
             
             this.ctx.shadowBlur = 10;
@@ -2433,6 +2582,7 @@ class Game {
         // Draw alien projectiles
         for (const proj of this.alienProjectiles) {
             if (!proj || proj.x === undefined || proj.y === undefined) continue;
+            
             if (proj.type === 'cannon') {
                 // Heavy Cannon — large glowing orb with trail
                 if (proj.trail) {
@@ -2500,37 +2650,6 @@ class Game {
                 this.ctx.closePath();
                 this.ctx.fill();
                 this.ctx.shadowBlur = 0;
-            } else if (proj.type === 'scatter') {
-                // Scatter Shot — small cyan bullets
-                this.ctx.shadowBlur = 6;
-                this.ctx.shadowColor = proj.color;
-                this.ctx.fillStyle = proj.color;
-                this.ctx.beginPath();
-                this.ctx.arc(proj.x, proj.y, 3, 0, Math.PI * 2);
-                this.ctx.fill();
-                this.ctx.shadowBlur = 0;
-            } else if (proj.type === 'emp') {
-                // EMP Pulse — expanding gold ring
-                const alpha = 1 - (proj.radius / proj.maxRadius);
-                this.ctx.globalAlpha = alpha * 0.8;
-                this.ctx.strokeStyle = proj.color;
-                this.ctx.lineWidth = 4;
-                this.ctx.shadowBlur = 15;
-                this.ctx.shadowColor = proj.color;
-                this.ctx.beginPath();
-                this.ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
-                this.ctx.stroke();
-                
-                // Inner ring
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeStyle = '#ffff00';
-                this.ctx.beginPath();
-                this.ctx.arc(proj.x, proj.y, proj.radius - 5, 0, Math.PI * 2);
-                this.ctx.stroke();
-                
-                this.ctx.shadowBlur = 0;
-                this.ctx.globalAlpha = 1;
-                this.ctx.lineWidth = 1;
             } else {
                 // Default/fallback
                 this.ctx.shadowBlur = 10;
@@ -2543,6 +2662,7 @@ class Game {
 
         // Draw debris
         for (const d of this.debris) {
+            if (!d) continue;
             this.ctx.save();
             this.ctx.translate(d.x, d.y);
             this.ctx.rotate(d.rotation);
@@ -2555,6 +2675,7 @@ class Game {
 
         // Draw particles
         for (const p of this.particles) {
+            if (!p) continue;
             const alpha = Math.max(0, p.life / 40);
             this.ctx.globalAlpha = alpha;
             this.ctx.fillStyle = p.color;
@@ -2567,6 +2688,10 @@ class Game {
         // Draw explosions
         for (let i = this.explosions.length - 1; i >= 0; i--) {
             const explosion = this.explosions[i];
+            if (!explosion) {
+                this.explosions.splice(i, 1);
+                continue;
+            }
             
             const progress = explosion.frame / explosion.maxFrames;
             const radius = progress * 40;
@@ -2601,6 +2726,7 @@ class Game {
         // Draw popups
         this.ctx.font = 'bold 14px "Courier New"';
         for (const p of this.popups) {
+            if (!p) continue;
             const alpha = p.life / 60;
             this.ctx.globalAlpha = alpha;
             this.ctx.fillStyle = p.color;
@@ -2622,11 +2748,18 @@ class Game {
         this.ctx.font = 'bold 20px "Courier New"';
         this.ctx.fillText(`Score: ${this.score}`, 10, 30);
         
+        // High score (subtle, top left)
+        if (this.highScore > 0) {
+            this.ctx.fillStyle = '#888888';
+            this.ctx.font = '12px "Courier New"';
+            this.ctx.fillText(`Best: W${this.highWave} / ${this.highScore}`, 10, 50);
+        }
+        
         // Wave counter (top right)
         this.ctx.textAlign = 'right';
-        this.ctx.fillStyle = '#00ff00';
+        this.ctx.fillStyle = this.isBossWave ? '#ffff00' : '#00ff00';
         this.ctx.font = 'bold 24px "Courier New"';
-        this.ctx.fillText(`WAVE ${this.currentWave}`, this.canvas.width - 10, 30);
+        this.ctx.fillText(this.isBossWave ? `⚡ BOSS WAVE ${this.currentWave} ⚡` : `WAVE ${this.currentWave}`, this.canvas.width - 10, 30);
         
         // Loop counter
         if (this.wavePhase === 'playing') {
@@ -2729,23 +2862,131 @@ class Game {
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'alphabetic';
 
+        // Boss defeated text
+        if (this.bossDefeatedText > 0) {
+            const scale = 1 + Math.sin(this.bossDefeatedText * 0.1) * 0.2;
+            this.ctx.save();
+            this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
+            this.ctx.scale(scale, scale);
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.font = 'bold 60px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.shadowBlur = 20;
+            this.ctx.shadowColor = '#ffff00';
+            this.ctx.fillText('BOSS DEFEATED!', 0, 0);
+            this.ctx.shadowBlur = 0;
+            this.ctx.restore();
+        }
+
+        // Toast notification
+        if (this.toast && this.toast.life > 0) {
+            const alpha = Math.min(1, this.toast.life / 30);
+            this.ctx.globalAlpha = alpha;
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.fillRect(this.canvas.width / 2 - 100, 80, 200, 40);
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = 'bold 16px "Courier New"';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(this.toast.message, this.canvas.width / 2, 105);
+            this.ctx.globalAlpha = 1;
+            this.ctx.textAlign = 'left';
+        }
+
+        // Tutorial overlay
+        if (this.tutorialStep >= 0 && this.tutorialStep <= 2) {
+            // Dark overlay
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // Skip button
+            this.ctx.fillStyle = '#888888';
+            this.ctx.font = '14px "Courier New"';
+            this.ctx.textAlign = 'right';
+            this.ctx.fillText('Tap anywhere to continue →', this.canvas.width - 10, this.canvas.height - 10);
+            this.ctx.textAlign = 'left';
+            
+            // Tutorial content
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = 'bold 28px "Courier New"';
+            this.ctx.textAlign = 'center';
+            
+            if (this.tutorialStep === 0) {
+                this.ctx.fillText('TAP THE GRID', this.canvas.width / 2, this.canvas.height / 2 - 60);
+                this.ctx.font = '18px "Courier New"';
+                this.ctx.fillText('to place your alien army', this.canvas.width / 2, this.canvas.height / 2 - 20);
+                
+                // Arrow pointing at grid
+                this.ctx.strokeStyle = '#ffff00';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.canvas.width / 2, this.canvas.height / 2 + 20);
+                this.ctx.lineTo(this.canvas.width / 2, this.gridYOffset - 10);
+                this.ctx.stroke();
+                this.ctx.fillStyle = '#ffff00';
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.canvas.width / 2, this.gridYOffset - 10);
+                this.ctx.lineTo(this.canvas.width / 2 - 10, this.gridYOffset);
+                this.ctx.lineTo(this.canvas.width / 2 + 10, this.gridYOffset);
+                this.ctx.closePath();
+                this.ctx.fill();
+            } else if (this.tutorialStep === 1) {
+                this.ctx.fillText('EACH ROW = DIFFERENT WEAPON', this.canvas.width / 2, this.canvas.height / 2 - 80);
+                this.ctx.font = '20px "Courier New"';
+                this.ctx.fillStyle = '#ff4400';
+                this.ctx.fillText('🔴 Cannon (Heavy Damage)', this.canvas.width / 2, this.canvas.height / 2 - 30);
+                this.ctx.fillStyle = '#00aaff';
+                this.ctx.fillText('🔵 Burst (3-shot Spread)', this.canvas.width / 2, this.canvas.height / 2 + 5);
+                this.ctx.fillStyle = '#cc00ff';
+                this.ctx.fillText('🟣 Homing (Tracking Missiles)', this.canvas.width / 2, this.canvas.height / 2 + 40);
+            } else if (this.tutorialStep === 2) {
+                this.ctx.fillText('HIT START!', this.canvas.width / 2, this.canvas.height / 2 - 60);
+                this.ctx.font = '18px "Courier New"';
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillText('Your beats attack the defender.', this.canvas.width / 2, this.canvas.height / 2 - 15);
+                this.ctx.fillText('Kill it to win!', this.canvas.width / 2, this.canvas.height / 2 + 20);
+                
+                // Arrow pointing at start button (bottom right where the button is)
+                this.ctx.strokeStyle = '#ffff00';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.canvas.width / 2 + 100, this.canvas.height / 2 + 60);
+                this.ctx.lineTo(this.canvas.width - 150, this.canvas.height - 150);
+                this.ctx.stroke();
+                this.ctx.fillStyle = '#ffff00';
+                this.ctx.beginPath();
+                this.ctx.moveTo(this.canvas.width - 150, this.canvas.height - 150);
+                this.ctx.lineTo(this.canvas.width - 160, this.canvas.height - 145);
+                this.ctx.lineTo(this.canvas.width - 155, this.canvas.height - 155);
+                this.ctx.closePath();
+                this.ctx.fill();
+            }
+            
+            this.ctx.textAlign = 'left';
+        }
+
         // Wave phase overlays
         if (this.wavePhase === 'prepare') {
             this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
-            this.ctx.fillStyle = '#ffff00';
+            this.ctx.fillStyle = this.isBossWave ? '#ffff00' : '#ffff00';
             this.ctx.font = 'bold 48px "Courier New"';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('PREPARE', this.canvas.width / 2, this.canvas.height / 2 - 40);
+            this.ctx.fillText(this.isBossWave ? '⚡ BOSS WAVE ⚡' : 'PREPARE', this.canvas.width / 2, this.canvas.height / 2 - 40);
             
             this.ctx.fillStyle = '#00ff00';
             this.ctx.font = 'bold 24px "Courier New"';
             this.ctx.fillText(`Wave ${this.currentWave} Starting...`, this.canvas.width / 2, this.canvas.height / 2 + 20);
             
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.font = '16px "Courier New"';
-            this.ctx.fillText('Edit your pattern now!', this.canvas.width / 2, this.canvas.height / 2 + 60);
+            if (this.isBossWave) {
+                this.ctx.fillStyle = '#ff8800';
+                this.ctx.font = '16px "Courier New"';
+                this.ctx.fillText('The COMMANDER approaches...', this.canvas.width / 2, this.canvas.height / 2 + 60);
+            } else {
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.font = '16px "Courier New"';
+                this.ctx.fillText('Edit your pattern now!', this.canvas.width / 2, this.canvas.height / 2 + 60);
+            }
             this.ctx.textAlign = 'left';
         } else if (this.wavePhase === 'cardpick') {
             // Card selection overlay
@@ -2868,20 +3109,31 @@ class Game {
             this.ctx.fillStyle = '#ff0000';
             this.ctx.font = 'bold 48px "Courier New"';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('DEFENSE HELD', this.canvas.width / 2, this.canvas.height / 2 - 60);
+            this.ctx.fillText('DEFENSE HELD', this.canvas.width / 2, this.canvas.height / 2 - 80);
             
             this.ctx.fillStyle = '#ffffff';
             this.ctx.font = 'bold 32px "Courier New"';
-            this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 10);
+            this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 30);
             
             this.ctx.fillStyle = '#ffff00';
             this.ctx.font = 'bold 24px "Courier New"';
-            this.ctx.fillText(`Wave Reached: ${this.currentWave}`, this.canvas.width / 2, this.canvas.height / 2 + 40);
-            this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width / 2, this.canvas.height / 2 + 75);
+            this.ctx.fillText(`Wave Reached: ${this.currentWave}`, this.canvas.width / 2, this.canvas.height / 2 + 20);
+            this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width / 2, this.canvas.height / 2 + 55);
+            
+            // High score display
+            if (this.score >= this.highScore || this.currentWave >= this.highWave) {
+                this.ctx.fillStyle = '#00ff00';
+                this.ctx.font = 'bold 20px "Courier New"';
+                this.ctx.fillText('★ NEW HIGH SCORE! ★', this.canvas.width / 2, this.canvas.height / 2 + 90);
+            } else {
+                this.ctx.fillStyle = '#888888';
+                this.ctx.font = '16px "Courier New"';
+                this.ctx.fillText(`Best: Wave ${this.highWave} / ${this.highScore}`, this.canvas.width / 2, this.canvas.height / 2 + 90);
+            }
             
             this.ctx.fillStyle = '#00ff00';
             this.ctx.font = '18px "Courier New"';
-            this.ctx.fillText('Press R or Tap to Restart', this.canvas.width / 2, this.canvas.height / 2 + 120);
+            this.ctx.fillText('Press R or Tap to Restart', this.canvas.width / 2, this.canvas.height / 2 + 130);
             this.ctx.textAlign = 'left';
         }
 

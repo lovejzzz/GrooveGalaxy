@@ -209,6 +209,17 @@ button:hover, button:active {
     gap: 5px;
 }
 
+.presets-grid #preset-share {
+    background-color: #004400;
+    border-color: #00ff00;
+}
+
+.presets-grid #preset-share:hover, 
+.presets-grid #preset-share:active {
+    background-color: #00ff00;
+    color: #000;
+}
+
 .presets-grid #preset-clear {
     grid-column: 1 / -1;
 }
