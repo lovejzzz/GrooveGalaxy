@@ -425,9 +425,6 @@ class Game {
             for (let j = 0; j < this.aliens.length; j++) {
                 const alien = this.aliens[j];
                 if (alien.alive && this.checkCollision(bullet, alien)) {
-                    alien.alive = false;
-                    alien.respawnTimer = 30; // Respawn after 30 frames (~0.5 seconds)
-                    
                     // Calculate if hit was on-beat
                     const isOnBeat = (alien.col === this.currentStep || 
                                      alien.col === (this.currentStep - 1 + this.gridCols) % this.gridCols);
@@ -441,8 +438,11 @@ class Game {
                         this.combo = 0;
                     }
                     
-                    this.bullets.splice(i, 1);
+                    // Remove alien permanently (clears from drum pattern)
+                    this.grid[alien.row][alien.col] = false;
                     this.createExplosion(alien.x, alien.y, isOnBeat);
+                    this.aliens.splice(j, 1);
+                    this.bullets.splice(i, 1);
                     hitAlien = true;
                     break;
                 }
@@ -451,20 +451,6 @@ class Game {
             // Remove bullets that are off screen
             if (!hitAlien && bullet.y < 0) {
                 this.bullets.splice(i, 1);
-            }
-        }
-
-        // Clean up dead aliens and handle respawn
-        for (let i = this.aliens.length - 1; i >= 0; i--) {
-            const alien = this.aliens[i];
-            if (!alien.alive && alien.respawnTimer !== undefined) {
-                alien.respawnTimer--;
-                if (alien.respawnTimer <= 0) {
-                    // Respawn the alien
-                    alien.alive = true;
-                    delete alien.respawnTimer;
-                    this.grid[alien.row][alien.col] = true;
-                }
             }
         }
 
