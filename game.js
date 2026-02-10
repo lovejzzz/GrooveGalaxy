@@ -69,8 +69,14 @@ class Game {
         this.currentWave = 1;
         this.currentLoop = 1;
         this.loopsPerWave = 8;
-        this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'gameover'
+        this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'cardpick', 'gameover'
         this.phaseTimer = 0;
+        
+        // NEW: Card upgrade system
+        this.upgrades = {}; // Tracks applied upgrades
+        this.currentCardChoices = []; // 3 cards shown to player
+        this.hoveredCardIndex = -1; // Which card is mouse over
+        this.fireZones = []; // For Napalm Rounds upgrade
         
         // NEW: Defender HP system
         this.defenderMaxHP = 60;
@@ -196,6 +202,162 @@ class Game {
         }
     }
 
+    getCardPool() {
+        return [
+            // Offensive (red)
+            {
+                id: 'napalmRounds',
+                name: 'Napalm Rounds',
+                icon: '🔥',
+                desc: 'Bass cannons leave fire zones',
+                rarity: 'offensive',
+                color: '#ff4444'
+            },
+            {
+                id: 'chainLightning',
+                name: 'Chain Lightning',
+                icon: '⚡',
+                desc: 'Snare bursts spawn arc shots',
+                rarity: 'offensive',
+                color: '#ff4444'
+            },
+            {
+                id: 'homingBoost',
+                name: 'Homing Boost',
+                icon: '🎯',
+                desc: 'Missiles track 2.4x better',
+                rarity: 'offensive',
+                color: '#ff4444'
+            },
+            {
+                id: 'volleyFire',
+                name: 'Volley Fire',
+                icon: '🌀',
+                desc: 'Aliens fire twice per beat',
+                rarity: 'offensive',
+                color: '#ff4444'
+            },
+            // Defensive (blue)
+            {
+                id: 'alienArmor',
+                name: 'Alien Armor',
+                icon: '🛡️',
+                desc: 'Aliens take 2 hits to kill',
+                rarity: 'defensive',
+                color: '#4444ff'
+            },
+            {
+                id: 'quickRespawn',
+                name: 'Quick Respawn',
+                icon: '🔄',
+                desc: 'Killed aliens respawn faster',
+                rarity: 'defensive',
+                color: '#4444ff'
+            },
+            {
+                id: 'lootDenial',
+                name: 'Loot Denial',
+                icon: '🚫',
+                desc: 'Power-up drops halved',
+                rarity: 'defensive',
+                color: '#4444ff'
+            },
+            // Utility (green)
+            {
+                id: 'extraRow',
+                name: 'Extra Row',
+                icon: '➕',
+                desc: 'Adds a 4th grid row',
+                rarity: 'utility',
+                color: '#44ff44'
+            },
+            {
+                id: 'tempoPush',
+                name: 'Tempo Push',
+                icon: '🎵',
+                desc: 'BPM +20 (more beats)',
+                rarity: 'utility',
+                color: '#44ff44'
+            },
+            {
+                id: 'doubleTime',
+                name: 'Double Time',
+                icon: '⏩',
+                desc: 'Projectile speed +50%',
+                rarity: 'utility',
+                color: '#44ff44'
+            },
+            // Chaotic (purple)
+            {
+                id: 'scramble',
+                name: 'Scramble',
+                icon: '🎲',
+                desc: 'Fill 30% of empty cells',
+                rarity: 'chaotic',
+                color: '#aa44ff'
+            },
+            {
+                id: 'mirrorBeat',
+                name: 'Mirror Beat',
+                icon: '🔀',
+                desc: 'Mirror current pattern',
+                rarity: 'chaotic',
+                color: '#aa44ff'
+            }
+        ];
+    }
+
+    generateCardChoices() {
+        const pool = this.getCardPool();
+        const available = pool.filter(card => !this.upgrades[card.id]);
+        
+        // If all cards picked, offer repeatable stat boosts (placeholder for now)
+        if (available.length === 0) {
+            return [
+                {
+                    id: 'damageBoost',
+                    name: 'Damage Boost',
+                    icon: '💥',
+                    desc: 'Projectile damage +10%',
+                    rarity: 'repeatable',
+                    color: '#ffaa00'
+                },
+                {
+                    id: 'hpBoost',
+                    name: 'HP Boost',
+                    icon: '❤️',
+                    desc: 'Max HP +15',
+                    rarity: 'repeatable',
+                    color: '#ff0000'
+                },
+                {
+                    id: 'speedBoost',
+                    name: 'Speed Boost',
+                    icon: '🚀',
+                    desc: 'Defender speed +1',
+                    rarity: 'repeatable',
+                    color: '#00ffff'
+                }
+            ];
+        }
+        
+        // Pick 3 random cards from available pool
+        const choices = [];
+        const poolCopy = [...available];
+        for (let i = 0; i < Math.min(3, poolCopy.length); i++) {
+            const index = Math.floor(Math.random() * poolCopy.length);
+            choices.push(poolCopy[index]);
+            poolCopy.splice(index, 1);
+        }
+        
+        // Fill with duplicates if less than 3 available
+        while (choices.length < 3 && available.length > 0) {
+            choices.push(available[Math.floor(Math.random() * available.length)]);
+        }
+        
+        return choices;
+    }
+
     setupMobileControls() {
         const btnLeft = document.getElementById('btn-left');
         const btnRight = document.getElementById('btn-right');
@@ -260,7 +422,7 @@ class Game {
             }
         });
 
-        // Canvas click for grid editing — always allowed
+        // Canvas click for grid editing and card selection
         this.canvas.addEventListener('click', (e) => {
             // Tap to restart on game over
             if (this.wavePhase === 'gameover') {
@@ -277,6 +439,15 @@ class Game {
             const canvasX = (x * scaleX);
             const canvasY = (y * scaleY);
             
+            // Handle card selection during cardpick phase
+            if (this.wavePhase === 'cardpick') {
+                const cardIndex = this.getClickedCardIndex(canvasX, canvasY);
+                if (cardIndex !== -1) {
+                    this.selectCard(cardIndex);
+                }
+                return;
+            }
+            
             const col = Math.floor(canvasX / this.cellWidth);
             const clickedRow = Math.floor((canvasY - this.gridYOffset) / this.cellHeight);
             
@@ -287,6 +458,25 @@ class Game {
                 
                 this.toggleGridCell(clickedRow, col);
             }
+        });
+        
+        // Add mousemove for card hover effect
+        this.canvas.addEventListener('mousemove', (e) => {
+            if (this.wavePhase !== 'cardpick') {
+                this.hoveredCardIndex = -1;
+                return;
+            }
+            
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const scaleX = this.canvas.width / rect.width;
+            const scaleY = this.canvas.height / rect.height;
+            const canvasX = (x * scaleX);
+            const canvasY = (y * scaleY);
+            
+            this.hoveredCardIndex = this.getClickedCardIndex(canvasX, canvasY);
         });
 
         // Preset pattern buttons
@@ -385,6 +575,11 @@ class Game {
         this.gameOver = false;
         this.defenderLowHP = false;
         
+        // Reset upgrades
+        this.upgrades = {};
+        this.currentCardChoices = [];
+        this.fireZones = [];
+        
         // Reset defender position
         this.defender.x = this.canvas.width / 2;
         
@@ -405,6 +600,172 @@ class Game {
         
         // Respawn all aliens from grid pattern
         this.respawnAliens();
+    }
+
+    getClickedCardIndex(x, y) {
+        if (this.currentCardChoices.length === 0) return -1;
+        
+        const cardWidth = 180;
+        const cardHeight = 250;
+        const gap = 20;
+        const totalWidth = (cardWidth * 3) + (gap * 2);
+        const startX = (this.canvas.width - totalWidth) / 2;
+        const startY = this.canvas.height / 2 - cardHeight / 2;
+        
+        for (let i = 0; i < 3; i++) {
+            const cardX = startX + (i * (cardWidth + gap));
+            if (x >= cardX && x <= cardX + cardWidth &&
+                y >= startY && y <= startY + cardHeight) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    selectCard(index) {
+        if (index < 0 || index >= this.currentCardChoices.length) return;
+        
+        const card = this.currentCardChoices[index];
+        this.applyUpgrade(card);
+        
+        // Mark as picked
+        this.upgrades[card.id] = true;
+        
+        // Transition to next wave
+        this.wavePhase = 'prepare';
+        this.phaseTimer = 0;
+        this.currentCardChoices = [];
+    }
+
+    applyUpgrade(card) {
+        switch (card.id) {
+            case 'napalmRounds':
+                // Will be handled in alienProjectile hit code
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'NAPALM ROUNDS!', '#ff4400');
+                break;
+                
+            case 'chainLightning':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'CHAIN LIGHTNING!', '#ffff00');
+                break;
+                
+            case 'homingBoost':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'HOMING BOOST!', '#00ffff');
+                break;
+                
+            case 'volleyFire':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'VOLLEY FIRE!', '#ff00ff');
+                break;
+                
+            case 'alienArmor':
+                // Apply to all current aliens
+                for (const alien of this.aliens) {
+                    if (!alien.hp) alien.hp = 2;
+                }
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'ALIEN ARMOR!', '#4444ff');
+                break;
+                
+            case 'quickRespawn':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'QUICK RESPAWN!', '#00aaff');
+                break;
+                
+            case 'lootDenial':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'LOOT DENIAL!', '#ff0000');
+                break;
+                
+            case 'extraRow':
+                // Add 4th row
+                if (this.gridRows === 3) {
+                    this.gridRows = 4;
+                    this.grid.push(Array(this.gridCols).fill(false));
+                    this.beatFlash.push(Array(this.gridCols).fill(0));
+                    this.drumMachine.soundOrder.push(1); // Reuse snare for 4th row
+                    this.instrumentColors.push({
+                        primary: '#00ffff',
+                        secondary: '#00aaaa',
+                        name: 'Cyan'
+                    });
+                }
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'EXTRA ROW!', '#00ffff');
+                break;
+                
+            case 'tempoPush':
+                this.bpm += 20;
+                this.bpmControl.value = this.bpm;
+                this.bpmValue.textContent = this.bpm;
+                this.stepInterval = (60 / this.bpm) * 1000 / 4;
+                const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
+                this.defender.speed = Math.round(5 * speedScale);
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'TEMPO PUSH!', '#ffff00');
+                break;
+                
+            case 'doubleTime':
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'DOUBLE TIME!', '#ff8800');
+                break;
+                
+            case 'scramble':
+                // Fill 30% of empty cells
+                let filled = 0;
+                for (let row = 0; row < this.gridRows; row++) {
+                    for (let col = 0; col < this.gridCols; col++) {
+                        if (!this.grid[row][col] && Math.random() < 0.3) {
+                            this.grid[row][col] = true;
+                            this.aliens.push({
+                                row, col,
+                                x: col * this.cellWidth + this.cellWidth / 2,
+                                y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                                alive: true,
+                                hp: this.upgrades.alienArmor ? 2 : 1
+                            });
+                            filled++;
+                        }
+                    }
+                }
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, `SCRAMBLE! +${filled}`, '#aa44ff');
+                break;
+                
+            case 'mirrorBeat':
+                // Mirror the pattern
+                for (let row = 0; row < this.gridRows; row++) {
+                    for (let col = 0; col < this.gridCols / 2; col++) {
+                        const mirrorCol = this.gridCols - 1 - col;
+                        if (this.grid[row][col] && !this.grid[row][mirrorCol]) {
+                            this.grid[row][mirrorCol] = true;
+                            this.aliens.push({
+                                row,
+                                col: mirrorCol,
+                                x: mirrorCol * this.cellWidth + this.cellWidth / 2,
+                                y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                                alive: true,
+                                hp: this.upgrades.alienArmor ? 2 : 1
+                            });
+                        } else if (!this.grid[row][col] && this.grid[row][mirrorCol]) {
+                            this.grid[row][col] = true;
+                            this.aliens.push({
+                                row,
+                                col: col,
+                                x: col * this.cellWidth + this.cellWidth / 2,
+                                y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                                alive: true,
+                                hp: this.upgrades.alienArmor ? 2 : 1
+                            });
+                        }
+                    }
+                }
+                this.createPopup(this.canvas.width/2, this.canvas.height/2, 'MIRROR BEAT!', '#aa44ff');
+                break;
+                
+            // Repeatable upgrades
+            case 'damageBoost':
+                // TODO: implement damage scaling
+                break;
+            case 'hpBoost':
+                this.defenderMaxHP += 15;
+                this.defenderHP += 15;
+                break;
+            case 'speedBoost':
+                this.defender.speed += 1;
+                break;
+        }
     }
 
     respawnAliens() {
@@ -787,26 +1148,24 @@ class Game {
                 trail: []
             });
         } else if (alien.row === 1) {
-            // Snare — Burst Fire (3 bullets)
+            // Snare — Burst Fire (3 bullets with slight spread)
             let bulletDamage = 3;
             if (aliensOnStep >= 2) bulletDamage = 4;
             
             for (let i = 0; i < 3; i++) {
-                setTimeout(() => {
-                    const spread = (i - 1) * 8; // -8, 0, +8 pixels
-                    this.alienProjectiles.push({
-                        type: 'burst',
-                        x: alien.x + spread,
-                        y: alien.y,
-                        width: 6,
-                        height: 10,
-                        speed: 4,
-                        damage: bulletDamage,
-                        color: colors.primary,
-                        row: alien.row,
-                        aliensOnStep
-                    });
-                }, i * 100); // 100ms delay between bullets
+                const spread = (i - 1) * 8; // -8, 0, +8 pixels
+                this.alienProjectiles.push({
+                    type: 'burst',
+                    x: alien.x + spread,
+                    y: alien.y - (i * 6), // stagger vertically so they arrive at different times
+                    width: 6,
+                    height: 10,
+                    speed: 4 + (i * 0.5), // slightly different speeds for spread effect
+                    damage: bulletDamage,
+                    color: colors.primary,
+                    row: alien.row,
+                    aliensOnStep
+                });
             }
         } else if (alien.row === 2) {
             // Hi-hat — Homing Missile
@@ -853,6 +1212,9 @@ class Game {
                 this.lastStepTime = performance.now();
             }
             return; // Don't update game during prepare
+        } else if (this.wavePhase === 'cardpick') {
+            // Player is choosing a card - game is paused
+            return;
         } else if (this.wavePhase === 'complete') {
             this.phaseTimer++;
             if (this.phaseTimer >= 120) { // 2 seconds
@@ -870,6 +1232,38 @@ class Game {
         // Handle mobile touch controls
         if (this.touchControls.left) this.moveDefender(-1);
         if (this.touchControls.right) this.moveDefender(1);
+
+        // Update fire zones (Napalm Rounds)
+        for (let i = this.fireZones.length - 1; i >= 0; i--) {
+            const zone = this.fireZones[i];
+            zone.life--;
+            
+            // Check if defender is in fire zone
+            const dist = Math.sqrt(
+                Math.pow(zone.x - (this.defender.x + this.defender.width/2), 2) +
+                Math.pow(zone.y - (this.defender.y + this.defender.height/2), 2)
+            );
+            
+            if (dist < 20) {
+                // Damage every 30 frames (2 damage per second at 60fps)
+                zone.damageTimer = (zone.damageTimer || 0) + 1;
+                if (zone.damageTimer >= 30) {
+                    if (this.activePowerUps.shield > 0) {
+                        this.activePowerUps.shield--;
+                    } else {
+                        this.defenderHP -= 2;
+                        this.score += 2;
+                        this.defenderDamageFlash = 0.5;
+                        this.createPopup(this.defender.x + this.defender.width/2, this.defender.y, '+2 BURN', '#ff6600');
+                    }
+                    zone.damageTimer = 0;
+                }
+            }
+            
+            if (zone.life <= 0) {
+                this.fireZones.splice(i, 1);
+            }
+        }
 
         // Update AI
         if (this.aiActive) {
@@ -1065,6 +1459,34 @@ class Game {
                 
                 // Explosion at defender
                 this.createExplosion(proj.x, proj.y, false);
+                
+                // Napalm Rounds - create fire zone on cannon hit
+                if (this.upgrades.napalmRounds && proj.type === 'cannon') {
+                    this.fireZones.push({
+                        x: proj.x,
+                        y: proj.y,
+                        life: 180, // 3 seconds at 60fps
+                        damageTimer: 0
+                    });
+                }
+                
+                // Chain Lightning - spawn arc shot on snare burst hit
+                if (this.upgrades.chainLightning && proj.type === 'burst') {
+                    const angle = Math.random() * Math.PI * 2;
+                    this.alienProjectiles.push({
+                        type: 'burst',
+                        x: proj.x,
+                        y: proj.y,
+                        width: 6,
+                        height: 10,
+                        speed: 4,
+                        damage: 3,
+                        color: '#ffff00',
+                        row: proj.row,
+                        aliensOnStep: 1
+                    });
+                }
+                
                 this.alienProjectiles.splice(i, 1);
                 
                 // Check win condition
@@ -1237,7 +1659,10 @@ class Game {
         this.defenderMaxHP = 60 + (this.currentWave * 15); // More HP each wave
         this.defenderHP = this.defenderMaxHP; // Reset HP for next wave
         this.defenderLowHP = false;
-        this.wavePhase = 'complete';
+        
+        // Show card selection
+        this.currentCardChoices = this.generateCardChoices();
+        this.wavePhase = 'cardpick';
         this.phaseTimer = 0;
         
         // Clear projectiles
@@ -1626,6 +2051,7 @@ class Game {
 
         // Draw alien projectiles
         for (const proj of this.alienProjectiles) {
+            if (!proj || proj.x === undefined || proj.y === undefined) continue;
             if (proj.type === 'cannon') {
                 // Heavy Cannon — large glowing orb with trail
                 if (proj.trail) {
