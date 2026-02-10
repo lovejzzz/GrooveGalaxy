@@ -19,8 +19,6 @@ class DrumMachine {
                 )
             );
 
-
-
             this.isInitialized = true;
         } catch (error) {
             console.error('Error loading sounds:', error);
@@ -35,8 +33,6 @@ class DrumMachine {
         source.connect(this.audioContext.destination);
         source.start();
     }
-
-
 }
 
 class Game {
@@ -46,17 +42,49 @@ class Game {
         this.canvas.width = 800;
         this.canvas.height = 600;
         
+        // Add roundRect polyfill for compatibility
+        if (!this.ctx.roundRect) {
+            this.ctx.roundRect = function(x, y, width, height, radius) {
+                this.beginPath();
+                this.moveTo(x + radius, y);
+                this.lineTo(x + width - radius, y);
+                this.arcTo(x + width, y, x + width, y + radius, radius);
+                this.lineTo(x + width, y + height - radius);
+                this.arcTo(x + width, y + height, x + width - radius, y + height, radius);
+                this.lineTo(x + radius, y + height);
+                this.arcTo(x, y + height, x, y + height - radius, radius);
+                this.lineTo(x, y + radius);
+                this.arcTo(x, y, x + radius, y, radius);
+                this.closePath();
+            };
+        }
+        
+        // Score system
+        this.score = 0;
+        this.combo = 0;
+        this.maxCombo = 0;
+        this.onBeatBonus = 100;
+        this.normalHitScore = 10;
+        
+        // Visual beat feedback
+        this.beatFlash = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(0));
+        this.stepPulse = 0;
+        
+        // Particles for sound visualization
+        this.particles = [];
+        
         // AI settings
         this.lastShotTime = 0;
-        this.shotDelay = 300; // Slower shooting speed (higher number = slower shooting)
-        this.aiAccuracy = 1.0; // Perfect accuracy
-        this.aiActive = false; // Track if AI is active, starts false until first beat
+        this.shotDelay = 300;
+        this.aiAccuracy = 1.0;
+        this.aiActive = false;
+        
         this.defender = {
             x: this.canvas.width / 2,
             y: this.canvas.height - 50,
             width: 40,
             height: 30,
-            speed: 5, // Base speed - will be adjusted by BPM
+            speed: 5,
         };
         
         this.gridCols = 16;
@@ -72,23 +100,71 @@ class Game {
         this.currentStep = 0;
         this.lastStepTime = 0;
         this.bpm = 120;
-        this.stepInterval = (60 / this.bpm) * 1000 / 4; // 16th notes
+        this.stepInterval = (60 / this.bpm) * 1000 / 4;
         
-        this.gameOver = false; // Kept for structure, but no longer triggers end
+        this.gameOver = false;
         this.isPaused = false;
         this.isStarted = false;
         this.controlButton = document.getElementById('controlButton');
         
         this.drumMachine = new DrumMachine();
-        // Setup BPM control
         this.bpmControl = document.getElementById('bpm-control');
         this.bpmValue = document.getElementById('bpm-value');
+        
+        // Mobile support
+        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        this.touchControls = {
+            left: false,
+            right: false,
+            shoot: false
+        };
+        
+        // Setup event listeners (called once in constructor)
         this.setupEventListeners();
+        
+        // Add mobile controls to HTML if on mobile
+        if (this.isMobile) {
+            this.createMobileControls();
+            this.adjustCanvasForMobile();
+        }
     }
 
-    init() {
-        // Initialize game state only
-        this.setupEventListeners();
+    adjustCanvasForMobile() {
+        const maxWidth = Math.min(window.innerWidth - 40, 800);
+        const scale = maxWidth / 800;
+        this.canvas.style.width = maxWidth + 'px';
+        this.canvas.style.height = (600 * scale) + 'px';
+    }
+
+    createMobileControls() {
+        const controlsHTML = `
+            <div id="mobile-controls" style="
+                display: flex;
+                justify-content: space-around;
+                margin-top: 20px;
+                gap: 10px;
+            ">
+                <button id="btn-left" style="flex: 1; padding: 20px; font-size: 20px;">◄</button>
+                <button id="btn-shoot" style="flex: 1; padding: 20px; font-size: 20px;">FIRE</button>
+                <button id="btn-right" style="flex: 1; padding: 20px; font-size: 20px;">►</button>
+            </div>
+        `;
+        
+        const container = document.querySelector('.game-container');
+        container.insertAdjacentHTML('beforeend', controlsHTML);
+        
+        // Touch event listeners
+        const btnLeft = document.getElementById('btn-left');
+        const btnRight = document.getElementById('btn-right');
+        const btnShoot = document.getElementById('btn-shoot');
+        
+        btnLeft.addEventListener('touchstart', (e) => { e.preventDefault(); this.touchControls.left = true; });
+        btnLeft.addEventListener('touchend', (e) => { e.preventDefault(); this.touchControls.left = false; });
+        
+        btnRight.addEventListener('touchstart', (e) => { e.preventDefault(); this.touchControls.right = true; });
+        btnRight.addEventListener('touchend', (e) => { e.preventDefault(); this.touchControls.right = false; });
+        
+        btnShoot.addEventListener('touchstart', (e) => { e.preventDefault(); this.shoot(); });
     }
 
     setupEventListeners() {
@@ -97,34 +173,27 @@ class Game {
             const newBpm = parseInt(this.bpmControl.value);
             this.bpm = newBpm;
             this.bpmValue.textContent = newBpm;
-            this.stepInterval = (60 / this.bpm) * 1000 / 4; // Update step interval
+            this.stepInterval = (60 / this.bpm) * 1000 / 4;
             
-            // Update defender speed based on BPM
-            // Scale from base speed at 60 BPM to 2.5x speed at 200 BPM
             const speedScale = 1 + ((this.bpm - 60) / (200 - 60)) * 1.5;
-            this.defender.speed = Math.round(5 * speedScale); // Base speed is 5
+            this.defender.speed = Math.round(5 * speedScale);
         });
 
         // Initialize control button
         this.controlButton.onclick = async () => {
             if (!this.isStarted) {
-                // First click - Start the game
                 await this.drumMachine.init();
                 this.isStarted = true;
                 this.animate();
                 this.controlButton.textContent = 'Pause';
-                // Play title animation once
+                
                 const titleImage = document.querySelector('.title-image');
                 titleImage.classList.add('shine');
-                // Remove shine class after animation completes
                 setTimeout(() => {
                     titleImage.classList.remove('shine');
-                }, 2500); // Same duration as animation
+                }, 2500);
             } else {
-                // Subsequent clicks - Toggle pause
                 this.togglePause();
-                // Just toggle pause, no more shine effect
-                
             }
         };
 
@@ -138,15 +207,14 @@ class Game {
             } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
                 this.moveDefender(1);
             }
-            // Removed Enter key logic since AI activates on first beat
         });
 
+        // Canvas click for grid editing
         this.canvas.addEventListener('click', (e) => {
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             
-            // Calculate the actual position in the canvas coordinate space
             const scaleX = this.canvas.width / rect.width;
             const scaleY = this.canvas.height / rect.height;
             const canvasX = (x * scaleX);
@@ -155,20 +223,16 @@ class Game {
             const col = Math.floor(canvasX / this.cellWidth);
             const clickedRow = Math.floor((canvasY - this.gridYOffset) / this.cellHeight);
             
-            // Only proceed if click is within valid grid area
             if (canvasY >= this.gridYOffset && 
                 canvasY <= this.gridYOffset + this.gridRows * this.cellHeight && 
                 col >= 0 && col < this.gridCols &&
                 clickedRow >= 0 && clickedRow < this.gridRows) {
                 
-                // Toggle the beat on/off
                 if (this.grid[clickedRow][col]) {
-                    // Remove the alien
                     this.grid[clickedRow][col] = false;
                     this.aliens = this.aliens.filter(alien => 
                         !(alien.row === clickedRow && alien.col === col));
                 } else {
-                    // Add new alien
                     this.grid[clickedRow][col] = true;
                     this.aliens.push({
                         row: clickedRow,
@@ -177,18 +241,96 @@ class Game {
                         y: clickedRow * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
                         alive: true
                     });
-                    // Activate AI on first beat if not already active
+                    
                     if (!this.aiActive && this.isStarted) {
                         this.aiActive = true;
-                        console.log('AI Activated on first beat');
                     }
                 }
             }
         });
 
-        document.getElementById('startButton').addEventListener('click', () => {
-            this.init();
+        // Preset pattern buttons
+        this.setupPresetButtons();
+    }
+
+    setupPresetButtons() {
+        const presets = {
+            rock: [
+                [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],  // Bass
+                [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],  // Snare
+                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]   // Hi-hat
+            ],
+            funk: [
+                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0],  // Bass
+                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],  // Snare
+                [1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0]   // Hi-hat
+            ],
+            jazz: [
+                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],  // Bass
+                [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],  // Snare
+                [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]   // Hi-hat (swing)
+            ],
+            hiphop: [
+                [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],  // Bass
+                [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],  // Snare
+                [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0]   // Hi-hat
+            ]
+        };
+
+        const presetsContainer = document.createElement('div');
+        presetsContainer.innerHTML = `
+            <div style="margin-top: 15px; padding: 10px; border: 1px solid #00ff00; background-color: rgba(0, 255, 0, 0.05);">
+                <label style="display: block; margin-bottom: 10px;">Preset Patterns:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+                    <button id="preset-rock" style="margin: 0;">Rock</button>
+                    <button id="preset-funk" style="margin: 0;">Funk</button>
+                    <button id="preset-jazz" style="margin: 0;">Jazz</button>
+                    <button id="preset-hiphop" style="margin: 0;">Hip-Hop</button>
+                </div>
+                <button id="preset-clear" style="margin-top: 10px; width: 100%;">Clear</button>
+            </div>
+        `;
+        
+        document.querySelector('.controls-container').appendChild(presetsContainer);
+        
+        // Add listeners for preset buttons
+        Object.keys(presets).forEach(preset => {
+            document.getElementById(`preset-${preset}`).addEventListener('click', () => {
+                this.loadPreset(presets[preset]);
+            });
         });
+        
+        document.getElementById('preset-clear').addEventListener('click', () => {
+            this.clearGrid();
+        });
+    }
+
+    loadPreset(pattern) {
+        this.clearGrid();
+        for (let row = 0; row < this.gridRows; row++) {
+            for (let col = 0; col < this.gridCols; col++) {
+                if (pattern[row][col] === 1) {
+                    this.grid[row][col] = true;
+                    this.aliens.push({
+                        row,
+                        col,
+                        x: col * this.cellWidth + this.cellWidth / 2,
+                        y: row * this.cellHeight + this.gridYOffset + this.cellHeight / 2,
+                        alive: true
+                    });
+                }
+            }
+        }
+        
+        if (!this.aiActive && this.isStarted) {
+            this.aiActive = true;
+        }
+    }
+
+    clearGrid() {
+        this.grid = Array(this.gridRows).fill().map(() => Array(this.gridCols).fill(false));
+        this.aliens = [];
+        this.aiActive = false;
     }
 
     moveDefender(direction) {
@@ -201,7 +343,6 @@ class Game {
     updateAI() {
         if (!this.aiActive || this.isPaused) return;
 
-        // Find nearest living alien
         let nearestAlien = null;
         let minDistance = Infinity;
 
@@ -214,13 +355,11 @@ class Game {
             }
         }
 
-        // Move towards nearest alien
         if (nearestAlien) {
             const defenderCenter = this.defender.x + this.defender.width / 2;
             const direction = nearestAlien.x > defenderCenter ? 1 : -1;
             this.moveDefender(direction);
 
-            // Shoot if enough time has passed
             const currentTime = Date.now();
             if (currentTime - this.lastShotTime >= this.shotDelay) {
                 this.shoot();
@@ -244,7 +383,6 @@ class Game {
             this.isPaused = !this.isPaused;
             this.controlButton.textContent = this.isPaused ? 'Resume' : 'Pause';
             
-            // Handle audio context state
             if (this.isPaused) {
                 this.drumMachine.audioContext.suspend();
             } else {
@@ -255,6 +393,12 @@ class Game {
 
     update() {
         if (this.isPaused) return;
+
+        // Handle mobile touch controls
+        if (this.isMobile) {
+            if (this.touchControls.left) this.moveDefender(-1);
+            if (this.touchControls.right) this.moveDefender(1);
+        }
 
         // Update AI
         if (this.aiActive) {
@@ -267,19 +411,50 @@ class Game {
             bullet.y -= bullet.speed;
             
             // Check for collisions with aliens
-            for (const alien of this.aliens) {
+            let hitAlien = false;
+            for (let j = 0; j < this.aliens.length; j++) {
+                const alien = this.aliens[j];
                 if (alien.alive && this.checkCollision(bullet, alien)) {
                     alien.alive = false;
-                    this.grid[alien.row][alien.col] = false;
+                    alien.respawnTimer = 30; // Respawn after 30 frames (~0.5 seconds)
+                    
+                    // Calculate if hit was on-beat
+                    const isOnBeat = (alien.col === this.currentStep || 
+                                     alien.col === (this.currentStep - 1 + this.gridCols) % this.gridCols);
+                    
+                    if (isOnBeat) {
+                        this.score += this.onBeatBonus;
+                        this.combo++;
+                        if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+                    } else {
+                        this.score += this.normalHitScore;
+                        this.combo = 0;
+                    }
+                    
                     this.bullets.splice(i, 1);
-                    this.createExplosion(alien.x, alien.y);
+                    this.createExplosion(alien.x, alien.y, isOnBeat);
+                    hitAlien = true;
                     break;
                 }
             }
             
             // Remove bullets that are off screen
-            if (bullet.y < 0) {
+            if (!hitAlien && bullet.y < 0) {
                 this.bullets.splice(i, 1);
+            }
+        }
+
+        // Clean up dead aliens and handle respawn
+        for (let i = this.aliens.length - 1; i >= 0; i--) {
+            const alien = this.aliens[i];
+            if (!alien.alive && alien.respawnTimer !== undefined) {
+                alien.respawnTimer--;
+                if (alien.respawnTimer <= 0) {
+                    // Respawn the alien
+                    alien.alive = true;
+                    delete alien.respawnTimer;
+                    this.grid[alien.row][alien.col] = true;
+                }
             }
         }
 
@@ -288,32 +463,87 @@ class Game {
         if (currentTime - this.lastStepTime >= this.stepInterval) {
             this.lastStepTime = currentTime;
             this.currentStep = (this.currentStep + 1) % this.gridCols;
+            this.stepPulse = 1.0; // Trigger pulse animation
             
-            // Play sounds for active aliens and update AI
-            let hasBeatsInCurrentStep = false;
+            // Play sounds for active aliens in current step
             for (let row = 0; row < this.gridRows; row++) {
                 if (this.grid[row][this.currentStep]) {
-                    this.drumMachine.playSound(row);
-                    hasBeatsInCurrentStep = true;
+                    const alien = this.aliens.find(a => a.row === row && a.col === this.currentStep && a.alive);
+                    if (alien) {
+                        this.drumMachine.playSound(row);
+                        this.beatFlash[row][this.currentStep] = 1.0;
+                        this.createSoundParticles(alien.x, alien.y, row);
+                    }
                 }
-            }
-            
-            // Update AI on beat
-            if (this.aiActive) {
-                this.updateAI();
             }
         }
 
-        // Removed game over check to keep game running indefinitely
+        // Decay beat flash and pulse
+        for (let row = 0; row < this.gridRows; row++) {
+            for (let col = 0; col < this.gridCols; col++) {
+                if (this.beatFlash[row][col] > 0) {
+                    this.beatFlash[row][col] -= 0.05;
+                }
+            }
+        }
+        if (this.stepPulse > 0) {
+            this.stepPulse -= 0.05;
+        }
+
+        // Update particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.2; // gravity
+            p.life--;
+            
+            if (p.life <= 0) {
+                this.particles.splice(i, 1);
+            }
+        }
     }
 
-    createExplosion(x, y) {
+    createSoundParticles(x, y, row) {
+        const colors = ['#00ff00', '#00cc00', '#00aa00'];
+        const color = colors[row % colors.length];
+        
+        for (let i = 0; i < 8; i++) {
+            const angle = (Math.PI * 2 * i) / 8;
+            this.particles.push({
+                x, y,
+                vx: Math.cos(angle) * 2,
+                vy: Math.sin(angle) * 2 - 1,
+                life: 20,
+                color
+            });
+        }
+    }
+
+    createExplosion(x, y, isOnBeat = false) {
         this.explosions.push({
-            x,
-            y,
+            x, y,
             frame: 0,
-            maxFrames: 20 // Duration of explosion animation
+            maxFrames: 30,
+            isOnBeat,
+            particles: []
         });
+        
+        // Create explosion particles
+        const numParticles = isOnBeat ? 20 : 12;
+        const colors = isOnBeat ? ['#00ff00', '#ffff00', '#ff00ff'] : ['#00ff00', '#00cc00'];
+        
+        for (let i = 0; i < numParticles; i++) {
+            const angle = (Math.PI * 2 * i) / numParticles;
+            const speed = isOnBeat ? 4 : 3;
+            this.particles.push({
+                x, y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: isOnBeat ? 40 : 25,
+                color: colors[Math.floor(Math.random() * colors.length)]
+            });
+        }
     }
 
     checkCollision(bullet, alien) {
@@ -329,9 +559,21 @@ class Game {
         this.ctx.fillStyle = '#000000';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Draw grid
+        // Draw grid with beat flash
         for (let row = 0; row < this.gridRows; row++) {
             for (let col = 0; col < this.gridCols; col++) {
+                const flashIntensity = this.beatFlash[row][col];
+                
+                if (flashIntensity > 0) {
+                    this.ctx.fillStyle = `rgba(0, 255, 0, ${flashIntensity * 0.3})`;
+                    this.ctx.fillRect(
+                        col * this.cellWidth,
+                        row * this.cellHeight + this.gridYOffset,
+                        this.cellWidth,
+                        this.cellHeight
+                    );
+                }
+                
                 this.ctx.strokeStyle = col % 4 === 0 ? '#008800' : '#00ff00';
                 this.ctx.strokeRect(
                     col * this.cellWidth,
@@ -342,9 +584,10 @@ class Game {
             }
         }
 
-        // Draw current step indicator
+        // Draw current step indicator with pulse
+        const pulseScale = 1 + (this.stepPulse * 0.3);
         this.ctx.strokeStyle = '#00ff00';
-        this.ctx.lineWidth = 2;
+        this.ctx.lineWidth = 2 * pulseScale;
         this.ctx.strokeRect(
             this.currentStep * this.cellWidth,
             this.gridYOffset,
@@ -353,8 +596,6 @@ class Game {
         );
         this.ctx.lineWidth = 1;
 
-
-
         // Draw aliens
         for (const alien of this.aliens) {
             if (alien.alive) {
@@ -362,15 +603,12 @@ class Game {
                 
                 switch(alien.row) {
                     case 0: // Bass - Heavy battleship
-                        // Main body
                         this.ctx.beginPath();
                         this.ctx.rect(alien.x - 20, alien.y - 8, 40, 16);
                         this.ctx.fill();
-                        // Top turret
                         this.ctx.beginPath();
                         this.ctx.rect(alien.x - 10, alien.y - 12, 20, 8);
                         this.ctx.fill();
-                        // Side wings
                         this.ctx.beginPath();
                         this.ctx.moveTo(alien.x - 20, alien.y);
                         this.ctx.lineTo(alien.x - 25, alien.y + 5);
@@ -384,25 +622,21 @@ class Game {
                         break;
                         
                     case 1: // Snare - Fast fighter
-                        // Main body
                         this.ctx.beginPath();
                         this.ctx.moveTo(alien.x, alien.y - 15);
                         this.ctx.lineTo(alien.x + 15, alien.y + 5);
                         this.ctx.lineTo(alien.x - 15, alien.y + 5);
                         this.ctx.closePath();
                         this.ctx.fill();
-                        // Cockpit
                         this.ctx.beginPath();
                         this.ctx.arc(alien.x, alien.y - 5, 5, 0, Math.PI * 2);
                         this.ctx.fill();
                         break;
                         
                     case 2: // Hi-hat - Classic UFO
-                        // UFO body
                         this.ctx.beginPath();
                         this.ctx.ellipse(alien.x, alien.y, 20, 8, 0, 0, Math.PI * 2);
                         this.ctx.fill();
-                        // UFO dome
                         this.ctx.beginPath();
                         this.ctx.ellipse(alien.x, alien.y - 5, 10, 10, 0, Math.PI, 0);
                         this.ctx.fill();
@@ -413,14 +647,12 @@ class Game {
 
         // Draw defender
         this.ctx.fillStyle = '#00ff00';
-        // Draw tank body
         this.ctx.fillRect(
             this.defender.x,
             this.defender.y + 10,
             this.defender.width,
             this.defender.height - 10
         );
-        // Draw tank turret
         this.ctx.beginPath();
         this.ctx.roundRect(
             this.defender.x + this.defender.width/4,
@@ -430,7 +662,6 @@ class Game {
             5
         );
         this.ctx.fill();
-        // Draw tank barrel
         this.ctx.fillRect(
             this.defender.x + this.defender.width/2 - 2,
             this.defender.y - 8,
@@ -445,17 +676,43 @@ class Game {
                             bullet.width, bullet.height);
         }
 
+        // Draw particles
+        for (const p of this.particles) {
+            const alpha = p.life / 40;
+            this.ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
         // Draw explosions
         for (let i = this.explosions.length - 1; i >= 0; i--) {
             const explosion = this.explosions[i];
             
-            const radius = (explosion.frame / explosion.maxFrames) * 30;
-            const opacity = 1 - (explosion.frame / explosion.maxFrames);
+            const progress = explosion.frame / explosion.maxFrames;
+            const radius = progress * 40;
+            const opacity = 1 - progress;
+            
+            // Multi-colored explosion rings
+            if (explosion.isOnBeat) {
+                this.ctx.beginPath();
+                this.ctx.arc(explosion.x, explosion.y, radius * 0.7, 0, Math.PI * 2);
+                this.ctx.strokeStyle = `rgba(255, 255, 0, ${opacity})`;
+                this.ctx.lineWidth = 3;
+                this.ctx.stroke();
+                
+                this.ctx.beginPath();
+                this.ctx.arc(explosion.x, explosion.y, radius * 1.2, 0, Math.PI * 2);
+                this.ctx.strokeStyle = `rgba(255, 0, 255, ${opacity * 0.7})`;
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+            }
             
             this.ctx.beginPath();
             this.ctx.arc(explosion.x, explosion.y, radius, 0, Math.PI * 2);
-            this.ctx.fillStyle = `rgba(0, 255, 0, ${opacity})`;
-            this.ctx.fill();
+            this.ctx.strokeStyle = `rgba(0, 255, 0, ${opacity})`;
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
             
             explosion.frame++;
             if (explosion.frame >= explosion.maxFrames) {
@@ -463,13 +720,26 @@ class Game {
             }
         }
 
-        // Removed game over message since game continues indefinitely
+        // Draw score
+        this.ctx.fillStyle = '#00ff00';
+        this.ctx.font = '20px "Courier New"';
+        this.ctx.fillText(`Score: ${this.score}`, 10, 30);
+        
+        if (this.combo > 1) {
+            this.ctx.fillStyle = '#ffff00';
+            this.ctx.fillText(`Combo: ${this.combo}x`, 10, 55);
+        }
+        
+        this.ctx.fillStyle = '#00ff00';
+        this.ctx.fillText(`Max Combo: ${this.maxCombo}`, 10, 80);
     }
 
     animate() {
         if (!this.isPaused) {
             this.update();
             this.draw();
+        } else {
+            this.draw(); // Still draw when paused
         }
         requestAnimationFrame(() => this.animate());
     }
@@ -478,15 +748,4 @@ class Game {
 // Initialize the game
 document.addEventListener('DOMContentLoaded', () => {
     const game = new Game();
-    game.init();
-
-
-    // Set up keyboard controls
-    game.keys = {};
-    document.addEventListener('keydown', (e) => {
-        game.keys[e.key] = true;
-    });
-    document.addEventListener('keyup', (e) => {
-        game.keys[e.key] = false;
-    });
 });
