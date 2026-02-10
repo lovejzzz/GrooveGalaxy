@@ -68,13 +68,13 @@ class Game {
         // NEW: Wave system
         this.currentWave = 1;
         this.currentLoop = 1;
-        this.loopsPerWave = 4;
+        this.loopsPerWave = 8;
         this.wavePhase = 'playing'; // 'playing', 'prepare', 'complete', 'gameover'
         this.phaseTimer = 0;
         
         // NEW: Defender HP system
-        this.defenderMaxHP = 100;
-        this.defenderHP = 100;
+        this.defenderMaxHP = 60;
+        this.defenderHP = 60;
         this.defenderDamageFlash = 0;
         this.defenderLowHP = false;
         this.defenderSmokeParticles = [];
@@ -251,10 +251,13 @@ class Game {
             }
         });
 
-        // Canvas click for grid editing
+        // Canvas click for grid editing — always allowed
         this.canvas.addEventListener('click', (e) => {
-            // Can only edit during prepare phase or before starting
-            if (this.wavePhase === 'playing' && this.isStarted) return;
+            // Tap to restart on game over
+            if (this.wavePhase === 'gameover') {
+                this.restartGame();
+                return;
+            }
             
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
@@ -414,16 +417,16 @@ class Game {
     updateAIForWave() {
         // Scale AI based on wave number
         if (this.currentWave === 1) {
-            this.shotDelay = 900;
-            this.aiAccuracy = 0.5;
+            this.shotDelay = 1500;
+            this.aiAccuracy = 0.3;
             this.aiShotsPerTurn = 1;
         } else if (this.currentWave <= 2) {
-            this.shotDelay = 800;
-            this.aiAccuracy = 0.55;
+            this.shotDelay = 1200;
+            this.aiAccuracy = 0.4;
             this.aiShotsPerTurn = 1;
         } else if (this.currentWave === 3) {
-            this.shotDelay = 700;
-            this.aiAccuracy = 0.6;
+            this.shotDelay = 900;
+            this.aiAccuracy = 0.5;
             this.aiShotsPerTurn = 1;
         } else if (this.currentWave === 4) {
             this.shotDelay = 600;
@@ -919,16 +922,14 @@ class Game {
             }
         }
 
-        // Check lose condition - all aliens dead
-        const aliveAliens = this.aliens.filter(a => a.alive).length;
-        if (aliveAliens === 0 && this.aliens.length > 0 && this.wavePhase === 'playing') {
-            this.gameLost();
-        }
+        // No mid-loop game over — aliens respawn each loop
+        // Game over only happens after all loops complete with defender alive
     }
 
     waveComplete() {
         // Defender destroyed - player wins wave
         this.score += this.currentWave * 500; // Wave completion bonus
+        this.defenderMaxHP = 60 + (this.currentWave * 15); // More HP each wave
         this.defenderHP = this.defenderMaxHP; // Reset HP for next wave
         this.defenderLowHP = false;
         this.wavePhase = 'complete';
@@ -1417,7 +1418,7 @@ class Game {
             
             this.ctx.fillStyle = '#00ff00';
             this.ctx.font = '18px "Courier New"';
-            this.ctx.fillText('Press R to Restart', this.canvas.width / 2, this.canvas.height / 2 + 120);
+            this.ctx.fillText('Press R or Tap to Restart', this.canvas.width / 2, this.canvas.height / 2 + 120);
             this.ctx.textAlign = 'left';
         }
 
